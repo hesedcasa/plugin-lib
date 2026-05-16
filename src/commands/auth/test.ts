@@ -3,7 +3,7 @@ import {action} from '@oclif/core/ux'
 
 import {createProfileManager} from '../../config.js'
 
-export interface ApiResult {
+interface ApiResult {
   data?: unknown
   error?: unknown
   success: boolean

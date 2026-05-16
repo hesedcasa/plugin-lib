@@ -1,4 +1,4 @@
-import { expect } from 'chai'
+import {expect} from 'chai'
 
 import {formatAsToon} from '../src/format.js'
 
@@ -34,7 +34,9 @@ describe('formatAsToon', () => {
   })
 
   it('encodes an array', () => {
-    expect(formatAsToon([1, 2, 3])).to.be.a('string').and.have.length.greaterThan(0)
+    expect(formatAsToon([1, 2, 3]))
+      .to.be.a('string')
+      .and.have.length.greaterThan(0)
   })
 
   it('encodes a truthy number', () => {

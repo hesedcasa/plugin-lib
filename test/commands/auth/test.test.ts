@@ -43,12 +43,14 @@ describe('auth test', () => {
     })
 
     let capturedAuth = ''
-    sandbox.stub(globalThis, 'fetch').callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      return new Response(JSON.stringify({}), {status: 200})
-    })
+    sandbox
+      .stub(globalThis, 'fetch')
+      .callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
+        // eslint-disable-next-line n/no-unsupported-features/node-builtins
+        capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
+        // eslint-disable-next-line n/no-unsupported-features/node-builtins
+        return new Response(JSON.stringify({}), {status: 200})
+      })
 
     const result = await AuthTest.run([], import.meta.url)
     expect(capturedAuth).to.equal('Bearer mytoken')
@@ -63,12 +65,14 @@ describe('auth test', () => {
     })
 
     let capturedAuth = ''
-    sandbox.stub(globalThis, 'fetch').callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      return new Response(JSON.stringify({}), {status: 200})
-    })
+    sandbox
+      .stub(globalThis, 'fetch')
+      .callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
+        // eslint-disable-next-line n/no-unsupported-features/node-builtins
+        capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
+        // eslint-disable-next-line n/no-unsupported-features/node-builtins
+        return new Response(JSON.stringify({}), {status: 200})
+      })
 
     await AuthTest.run([], import.meta.url)
     expect(capturedAuth).to.equal(`Basic ${Buffer.from('user@example.com:mytoken').toString('base64')}`)
