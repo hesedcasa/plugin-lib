@@ -2,15 +2,18 @@ import type {Config} from '@oclif/core'
 
 import {expect} from 'chai'
 import {default as fs} from 'fs-extra'
+import {default as path} from 'node:path'
 import {createSandbox} from 'sinon'
 
 import {createProfileManager} from '../src/config.js'
 
-function makeConfig(dir = '/mock/config'): Config {
+const mockConfigDir = path.join(path.sep, 'mock', 'config')
+
+function makeConfig(dir = mockConfigDir): Config {
   return {bin: 'test-cli', configDir: dir} as unknown as Config
 }
 
-const configFilePath = '/mock/config/test-cli-config.json'
+const configFilePath = path.join(mockConfigDir, 'test-cli-config.json')
 
 describe('createProfileManager', () => {
   const sandbox = createSandbox()
