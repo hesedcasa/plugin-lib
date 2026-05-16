@@ -3,7 +3,7 @@ import {action} from '@oclif/core/ux'
 
 import {createProfileManager} from '../../config.js'
 
-interface ApiResult {
+export interface ApiResult {
   data?: unknown
   error?: unknown
   success: boolean
@@ -39,8 +39,6 @@ export default class AuthTest extends Command {
       method: this.config.pjson?.hesed?.auth?.method ?? 'GET',
     })
 
-    console.log(res)
-    
     if (res.ok) {
       action.stop('✓ successful')
       this.log('Successful connection')
