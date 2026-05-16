@@ -26,7 +26,7 @@ $ npm install -g @hesed/plugin-lib
 $ @hesed/plugin-lib COMMAND
 running command...
 $ @hesed/plugin-lib (--version)
-@hesed/plugin-lib/0.1.0 linux-x64 node-v20.20.2
+@hesed/plugin-lib/0.1.1 linux-x64 node-v20.20.2
 $ @hesed/plugin-lib --help [COMMAND]
 USAGE
   $ @hesed/plugin-lib COMMAND
@@ -66,7 +66,7 @@ EXAMPLES
   $ @hesed/plugin-lib auth add --p work
 ```
 
-_See code: [src/commands/auth/add.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.0/src/commands/auth/add.ts)_
+_See code: [src/commands/auth/add.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.1/src/commands/auth/add.ts)_
 
 ## `@hesed/plugin-lib auth test`
 
@@ -91,5 +91,5 @@ EXAMPLES
   $ @hesed/plugin-lib auth test --p work
 ```
 
-_See code: [src/commands/auth/test.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.0/src/commands/auth/test.ts)_
+_See code: [src/commands/auth/test.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.1/src/commands/auth/test.ts)_
 <!-- commandsstop -->
