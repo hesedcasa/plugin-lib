@@ -26,7 +26,7 @@ $ npm install -g @hesed/plugin-lib
 $ @hesed/plugin-lib COMMAND
 running command...
 $ @hesed/plugin-lib (--version)
-@hesed/plugin-lib/0.1.0 darwin-arm64 node-v22.14.0
+@hesed/plugin-lib/0.1.0 linux-x64 node-v20.20.2
 $ @hesed/plugin-lib --help [COMMAND]
 USAGE
   $ @hesed/plugin-lib COMMAND
@@ -46,13 +46,13 @@ Add authentication
 
 ```
 USAGE
-  $ @hesed/plugin-lib auth add [--json] [-e <value>] [-p <value>] [-t <value>] [-u <value>]
+  $ @hesed/plugin-lib auth add -t <value> -u <value> [--json] [-e <value>] [-p <value>]
 
 FLAGS
   -e, --email=<value>    Account email
   -p, --profile=<value>  Profile name
-  -t, --token=<value>    API Token
-  -u, --url=<value>      API endpoint URL (start with https://)
+  -t, --token=<value>    (required) API Token
+  -u, --url=<value>      (required) API endpoint URL (start with https://)
 
 GLOBAL FLAGS
   --json  Format output as json.
