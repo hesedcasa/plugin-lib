@@ -1,7 +1,8 @@
-import {Command, Flags} from '@oclif/core'
+
+import { Command, Flags } from '@oclif/core'
 import {action} from '@oclif/core/ux'
 
-import {createProfileManager} from '../../config.js'
+import {createProfileManager, testAuthConnection} from '../../../config.js'
 
 interface ApiResult {
   data?: unknown
@@ -23,21 +24,11 @@ export default class AuthTest extends Command {
 
     const {authConfig} = await createProfileManager(this.config, flags.profile)
     if (!authConfig) {
-      return {
-        error: 'Missing authentication config',
-        success: false,
-      }
+      this.error(`Missing authentication config. Run '${this.config.bin} auth add'.`)
     }
 
-    const {apiToken, email, host} = authConfig
-
     action.start('Authenticating connection')
-    const authHeader = email ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}` : `Bearer ${apiToken}`
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins -- fetch is available in Node 18+
-    const res = await fetch(host + (this.config.pjson?.hesed?.auth?.testPath ?? '/ping'), {
-      headers: {Authorization: authHeader},
-      method: this.config.pjson?.hesed?.auth?.method ?? 'GET',
-    })
+    const res = await testAuthConnection(authConfig, this.config.pjson?.hesed?.auth)
 
     if (res.ok) {
       action.stop('✓ successful')

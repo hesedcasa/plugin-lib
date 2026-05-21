@@ -2,7 +2,7 @@ import {input} from '@inquirer/prompts'
 import {Command, Flags} from '@oclif/core'
 import {action} from '@oclif/core/ux'
 
-import {createProfileManager} from '../../config.js'
+import {createProfileManager, testAuthConnection} from '../../../config.js'
 
 interface ApiResult {
   data?: unknown
@@ -45,12 +45,7 @@ export default class AuthAdd extends Command {
     await saveProfiles(profiles)
 
     action.start('Authenticating')
-    const authHeader = email ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}` : `Bearer ${apiToken}`
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins -- fetch is available in Node 18+
-    const res = await fetch(host + (this.config.pjson?.hesed?.auth?.testPath ?? '/ping'), {
-      headers: {Authorization: authHeader},
-      method: this.config.pjson?.hesed?.auth?.method ?? 'GET',
-    })
+    const res = await testAuthConnection({apiToken, email, host}, this.config.pjson?.hesed?.auth)
 
     if (res.ok) {
       action.stop('✓ successful')

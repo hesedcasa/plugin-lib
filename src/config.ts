@@ -95,3 +95,17 @@ export async function createProfileManager(config: Config, profile?: string) {
 
   return {authConfig, getDefaultProfile, readProfiles, saveProfiles, setDefaultProfile}
 }
+
+export async function testAuthConnection(
+  authConfig: AuthConfig,
+  testConfig?: {method?: string; testPath?: string},
+  // eslint-disable-next-line n/no-unsupported-features/node-builtins
+): Promise<Response> {
+  const {apiToken, email, host} = authConfig
+  const authHeader = email ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}` : `Bearer ${apiToken}`
+  // eslint-disable-next-line n/no-unsupported-features/node-builtins -- fetch is available in Node 18+
+  return fetch(host + (testConfig?.testPath ?? '/ping'), {
+    headers: {Authorization: authHeader},
+    method: testConfig?.method ?? 'GET',
+  })
+}
