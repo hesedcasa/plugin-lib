@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/hesedcasa/plugin-lib/compare/v0.1.1...v0.2.0) (2026-05-21)
+
+
+### 🎉 Features
+
+* add init hook to rename placeholder topic to bin name at runtime ([58c3b00](https://github.com/hesedcasa/plugin-lib/commit/58c3b0045c2dd110566b24ea306c3dbecc9469b6))
+* add init hook to rename placeholder topic to bin name at runtime ([612333e](https://github.com/hesedcasa/plugin-lib/commit/612333e4f28ec6b987d054f466c08eaac9b0f21b))
+
 ## [0.1.1](https://github.com/hesedcasa/plugin-lib/compare/v0.1.0...v0.1.1) (2026-05-16)
 
 
