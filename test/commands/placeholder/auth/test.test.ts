@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {createSandbox} from 'sinon'
 
-import AuthTest from '../../../src/commands/auth/test.js'
+import AuthTest from '../../../../src/commands/placeholder/auth/test.js'
 
 // oclif derives configDir from XDG_CONFIG_HOME; we redirect it to a temp dir
 // so tests never touch the real user config.
@@ -32,9 +32,13 @@ describe('auth test', () => {
     await fs.remove(tmpDir)
   })
 
-  it('returns error result when no auth config exists', async () => {
-    const result = await AuthTest.run([], import.meta.url)
-    expect(result).to.deep.equal({error: 'Missing authentication config', success: false})
+  it('throws when no auth config exists', async () => {
+    try {
+      await AuthTest.run([], import.meta.url)
+      assert.fail('should have thrown')
+    } catch (error) {
+      expect((error as Error).message).to.include('Missing authentication config')
+    }
   })
 
   it('uses Bearer token when authConfig has no email', async () => {

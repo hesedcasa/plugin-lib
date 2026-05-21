@@ -50,7 +50,11 @@
   "oclif": {
     "commands": "./dist/commands",
     "topicSeparator": " ",
-    "flexibleTaxonomy": true
+    "hooks": {
+      "init": [
+        "./dist/hooks/init/rename-topic"
+      ]
+    }
   },
   "hesed": {
     "auth": {
