@@ -26,7 +26,7 @@ $ npm install -g @hesed/plugin-lib
 $ @hesed/plugin-lib COMMAND
 running command...
 $ @hesed/plugin-lib (--version)
-@hesed/plugin-lib/0.1.1 linux-x64 node-v20.20.2
+@hesed/plugin-lib/0.2.0 linux-x64 node-v20.20.2
 $ @hesed/plugin-lib --help [COMMAND]
 USAGE
   $ @hesed/plugin-lib COMMAND
@@ -37,16 +37,16 @@ USAGE
 # Commands
 
 <!-- commands -->
-* [`@hesed/plugin-lib auth add`](#hesedplugin-lib-auth-add)
-* [`@hesed/plugin-lib auth test`](#hesedplugin-lib-auth-test)
+* [`@hesed/plugin-lib @hesed/plugin-lib auth add`](#hesedplugin-lib-hesedplugin-lib-auth-add)
+* [`@hesed/plugin-lib @hesed/plugin-lib auth test`](#hesedplugin-lib-hesedplugin-lib-auth-test)
 
-## `@hesed/plugin-lib auth add`
+## `@hesed/plugin-lib @hesed/plugin-lib auth add`
 
 Add authentication
 
 ```
 USAGE
-  $ @hesed/plugin-lib auth add -t <value> -u <value> [--json] [-e <value>] [-p <value>]
+  $ @hesed/plugin-lib @hesed/plugin-lib auth add -t <value> -u <value> [--json] [-e <value>] [-p <value>]
 
 FLAGS
   -e, --email=<value>    Account email
@@ -61,20 +61,18 @@ DESCRIPTION
   Add authentication
 
 EXAMPLES
-  $ @hesed/plugin-lib auth add
+  $ @hesed/plugin-lib @hesed/plugin-lib auth add
 
-  $ @hesed/plugin-lib auth add --p work
+  $ @hesed/plugin-lib @hesed/plugin-lib auth add --p work
 ```
 
-_See code: [src/commands/auth/add.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.1/src/commands/auth/add.ts)_
-
-## `@hesed/plugin-lib auth test`
+## `@hesed/plugin-lib @hesed/plugin-lib auth test`
 
 Test authentication and connection
 
 ```
 USAGE
-  $ @hesed/plugin-lib auth test [--json] [-p <value>]
+  $ @hesed/plugin-lib @hesed/plugin-lib auth test [--json] [-p <value>]
 
 FLAGS
   -p, --profile=<value>  Authentication profile name
@@ -86,10 +84,8 @@ DESCRIPTION
   Test authentication and connection
 
 EXAMPLES
-  $ @hesed/plugin-lib auth test
+  $ @hesed/plugin-lib @hesed/plugin-lib auth test
 
-  $ @hesed/plugin-lib auth test --p work
+  $ @hesed/plugin-lib @hesed/plugin-lib auth test --p work
 ```
-
-_See code: [src/commands/auth/test.ts](https://github.com/hesedcasa/plugin-lib/blob/v0.1.1/src/commands/auth/test.ts)_
 <!-- commandsstop -->
