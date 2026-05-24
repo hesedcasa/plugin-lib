@@ -1,4 +1,3 @@
-import {Config} from '@oclif/core'
 import {default as fs} from 'fs-extra'
 import {default as path} from 'node:path'
 
@@ -8,104 +7,106 @@ export interface AuthConfig {
   host: string
 }
 
-export type Profiles = Record<string, AuthConfig>
-
-function logFsError(error: unknown, missingMsg: string, log: (message: string) => void): void {
-  if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-    log(missingMsg)
-  } else {
-    log(error instanceof Error ? error.message : String(error))
-  }
+export interface Config {
+  auth: AuthConfig
 }
 
-export async function createProfileManager(config: Config, profile?: string) {
-  const cp = path.join(config.configDir, `${config.bin}-config.json`)
+export type Profiles = Record<string, AuthConfig>
 
-  async function loadAuthConfig(): Promise<AuthConfig | undefined> {
-    try {
-      const raw = await fs.readJSON(cp)
-      if (raw.profiles) {
-        const resolvedProfile = profile ?? raw.defaultProfile ?? 'default'
-        return raw.profiles[resolvedProfile] as AuthConfig | undefined
-      }
-
-      if (profile && profile !== 'default') return undefined
-      return raw.auth as AuthConfig | undefined
-    } catch {
-      return undefined
-    }
+export function createProfileManager(configFile: string) {
+  function configPath(configDir: string): string {
+    return path.join(configDir, configFile)
   }
 
-  async function getDefaultProfile(): Promise<string> {
+  async function getDefaultProfile(configDir: string): Promise<string> {
+    const cp = configPath(configDir)
     try {
       const raw = await fs.readJSON(cp)
-      return raw.defaultProfile ?? 'default'
+      return raw.defaultProfile || 'default'
     } catch {
       return 'default'
     }
   }
 
-  async function setDefaultProfile(profileName: string, log: (message: string) => void): Promise<void> {
-    let raw: Record<string, unknown>
-    try {
-      raw = await fs.readJSON(cp)
-    } catch (error) {
-      logFsError(error, 'Missing authentication config', log)
+  async function setDefaultProfile(configDir: string, profile: string, log: (message: string) => void): Promise<void> {
+    const profiles = await readProfiles(configDir, log)
+    if (!profiles) return
+    if (!(profile in profiles)) {
+      log(`Profile '${profile}' not found`)
       return
     }
 
-    const profiles = raw.profiles as Profiles | undefined
-    if (!profiles || !(profileName in profiles)) {
-      log(`Profile '${profileName}' not found`)
-      return
-    }
-
-    raw.defaultProfile = profileName
+    const cp = configPath(configDir)
+    const raw = await fs.readJSON(cp)
+    raw.defaultProfile = profile
     await fs.outputJSON(cp, raw, {spaces: 2})
-    log(`Default profile set to '${profileName}'`)
+    log(`Default profile set to '${profile}'`)
   }
 
-  async function readProfiles(log: (message: string) => void): Promise<Profiles | undefined> {
+  async function readConfig(
+    configDir: string,
+    log: (message: string) => void,
+    profile?: string,
+  ): Promise<Config | undefined> {
+    const cp = configPath(configDir)
+
     try {
       const raw = await fs.readJSON(cp)
-      if (raw.profiles) return raw.profiles as Profiles
+
+      if (raw.profiles) {
+        const resolvedProfile = profile ?? (await getDefaultProfile(configDir))
+        const auth = raw.profiles[resolvedProfile] as AuthConfig | undefined
+        if (!auth) {
+          log(`Profile '${resolvedProfile}' not found`)
+          return undefined
+        }
+
+        return {auth}
+      }
+
       // backward compat: old { auth: {...} } format
-      if (raw.auth) return {default: raw.auth as AuthConfig}
-      return {}
+      if (profile && profile !== 'default') {
+        log(`Profile '${profile}' not found`)
+        return undefined
+      }
+
+      return raw as Config
     } catch (error: unknown) {
-      logFsError(error, 'No authentication profiles found', log)
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        log('Missing authentication config')
+      } else {
+        log(error instanceof Error ? error.message : String(error))
+      }
+
       return undefined
     }
   }
 
-  async function saveProfiles(profiles: Profiles): Promise<void> {
-    let raw: Record<string, unknown> = {}
-    try {
-      raw = await fs.readJSON(cp)
-    } catch {
-      // file doesn't exist yet
-    }
+  async function readProfiles(configDir: string, log: (message: string) => void): Promise<Profiles | undefined> {
+    const cp = configPath(configDir)
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {auth: _auth, ...rest} = raw
-    await fs.outputJSON(cp, {...rest, profiles}, {mode: 0o600})
+    try {
+      const raw = await fs.readJSON(cp)
+      if (raw.profiles) {
+        return raw.profiles as Profiles
+      }
+
+      // backward compat: treat old { auth: {...} } as the default profile
+      if (raw.auth) {
+        return {default: raw.auth as AuthConfig}
+      }
+
+      return {}
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        log('No authentication profiles found')
+      } else {
+        log(error instanceof Error ? error.message : String(error))
+      }
+
+      return undefined
+    }
   }
 
-  const authConfig = await loadAuthConfig()
-
-  return {authConfig, getDefaultProfile, readProfiles, saveProfiles, setDefaultProfile}
-}
-
-export async function testAuthConnection(
-  authConfig: AuthConfig,
-  testConfig?: {method?: string; testPath?: string},
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
-): Promise<Response> {
-  const {apiToken, email, host} = authConfig
-  const authHeader = email ? `Basic ${Buffer.from(`${email}:${apiToken}`).toString('base64')}` : `Bearer ${apiToken}`
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins -- fetch is available in Node 18+
-  return fetch(host + (testConfig?.testPath ?? '/ping'), {
-    headers: {Authorization: authHeader},
-    method: testConfig?.method ?? 'GET',
-  })
+  return {getDefaultProfile, readConfig, readProfiles, setDefaultProfile}
 }
