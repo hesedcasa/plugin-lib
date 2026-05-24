@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {createSandbox} from 'sinon'
 
-import {type AuthCommandOptions, createAuthTestCommand} from '../../../../src/auth.js'
+import {type AuthCommandOptions, createAuthTestCommand} from '../src/auth.js'
 
 // Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
 // This helper isolates the one necessary cast so call sites stay readable.
