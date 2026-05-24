@@ -4,7 +4,7 @@ import {action} from '@oclif/core/ux'
 import {default as fs} from 'fs-extra'
 import {default as path} from 'node:path'
 
-import {type Profiles, createProfileManager} from './config.js'
+import {createProfileManager, type Profiles} from './config.js'
 
 export interface AuthResult {
   error?: string

@@ -4,20 +4,33 @@ import os from 'node:os'
 import path from 'node:path'
 import {createSandbox} from 'sinon'
 
-import AuthTest from '../../../../src/commands/placeholder/auth/test.js'
+import {type AuthCommandOptions, createAuthTestCommand} from '../../../../src/auth.js'
 
-// oclif derives configDir from XDG_CONFIG_HOME; we redirect it to a temp dir
-// so tests never touch the real user config.
-describe('auth test', () => {
+// Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
+// This helper isolates the one necessary cast so call sites stay readable.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const run = (Cls: ReturnType<typeof createAuthTestCommand>, argv: string[] = []) => (Cls as any).run(argv, import.meta.url)
+
+describe('createAuthTestCommand', () => {
   const sandbox = createSandbox()
-
-  // bin = @hesed/plugin-lib → configDir = <XDG_CONFIG_HOME>/@hesed/plugin-lib
-  // config file = <configDir>/@hesed/plugin-lib-config.json
   let tmpDir: string
   let savedXdg: string | undefined
 
+  // oclif derives configDir as path.join(XDG_CONFIG_HOME, config.bin)
+  // config.bin = "@hesed/plugin-lib" (from package.json name)
   function configFilePath(): string {
-    return path.join(tmpDir, '@hesed/plugin-lib', '@hesed/plugin-lib-config.json')
+    return path.join(tmpDir, '@hesed/plugin-lib', 'test-cli-config.json')
+  }
+
+  function makeOptions(overrides?: Partial<AuthCommandOptions>): AuthCommandOptions {
+    return {
+      clearClients: sandbox.stub(),
+      configFile: 'test-cli-config.json',
+      hasHostFlag: true,
+      serviceName: 'TestService',
+      testConnection: sandbox.stub().resolves({success: true}),
+      ...overrides,
+    }
   }
 
   beforeEach(async () => {
@@ -28,73 +41,56 @@ describe('auth test', () => {
 
   afterEach(async () => {
     sandbox.restore()
-    process.env.XDG_CONFIG_HOME = savedXdg
+    if (savedXdg === undefined) {
+      delete process.env.XDG_CONFIG_HOME
+    } else {
+      process.env.XDG_CONFIG_HOME = savedXdg
+    }
+
     await fs.remove(tmpDir)
   })
 
   it('throws when no auth config exists', async () => {
     try {
-      await AuthTest.run([], import.meta.url)
+      await run(createAuthTestCommand(makeOptions()))
       assert.fail('should have thrown')
     } catch (error) {
       expect((error as Error).message).to.include('Missing authentication config')
     }
   })
 
-  it('uses Bearer token when authConfig has no email', async () => {
+  it('calls testConnection with the resolved auth config', async () => {
     await fs.outputJSON(configFilePath(), {
       profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
     })
 
-    let capturedAuth = ''
-    sandbox
-      .stub(globalThis, 'fetch')
-      .callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins
-        capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins
-        return new Response(JSON.stringify({}), {status: 200})
-      })
+    const testConnection = sandbox.stub().resolves({success: true})
+    await run(createAuthTestCommand(makeOptions({testConnection})))
 
-    const result = await AuthTest.run([], import.meta.url)
-    expect(capturedAuth).to.equal('Bearer mytoken')
-    expect(result).to.deep.equal({data: {}, success: true})
+    expect(testConnection.calledOnce).to.be.true
+    expect(testConnection.firstCall.args[0]).to.deep.equal({apiToken: 'mytoken', host: 'https://api.example.com'})
   })
 
-  it('uses Basic auth when authConfig includes an email', async () => {
-    await fs.outputJSON(configFilePath(), {
-      profiles: {
-        default: {apiToken: 'mytoken', email: 'user@example.com', host: 'https://api.example.com'},
-      },
-    })
-
-    let capturedAuth = ''
-    sandbox
-      .stub(globalThis, 'fetch')
-      .callsFake(async (_url: unknown, init?: Parameters<typeof globalThis.fetch>[1]) => {
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins
-        capturedAuth = new Headers(init?.headers).get('authorization') ?? ''
-        // eslint-disable-next-line n/no-unsupported-features/node-builtins
-        return new Response(JSON.stringify({}), {status: 200})
-      })
-
-    await AuthTest.run([], import.meta.url)
-    expect(capturedAuth).to.equal(`Basic ${Buffer.from('user@example.com:mytoken').toString('base64')}`)
-  })
-
-  it('throws when the API responds with a non-ok status', async () => {
+  it('calls clearClients after a successful connection', async () => {
     await fs.outputJSON(configFilePath(), {
       profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
     })
 
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
-    sandbox.stub(globalThis, 'fetch').resolves(new Response('Unauthorized', {status: 401}))
+    const clearClients = sandbox.stub()
+    await run(createAuthTestCommand(makeOptions({clearClients})))
+
+    expect(clearClients.calledOnce).to.be.true
+  })
+
+  it('throws when testConnection returns failure', async () => {
+    await fs.outputJSON(configFilePath(), {
+      profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+    })
 
     try {
-      await AuthTest.run([], import.meta.url)
+      await run(createAuthTestCommand(makeOptions({testConnection: sandbox.stub().resolves({success: false})})))
       assert.fail('should have thrown')
     } catch (error) {
-      expect(error).to.be.instanceOf(Error)
       expect((error as Error).message).to.include('Failed to connect')
     }
   })
@@ -107,14 +103,27 @@ describe('auth test', () => {
       },
     })
 
-    let capturedUrl = ''
-    sandbox.stub(globalThis, 'fetch').callsFake(async (url: unknown) => {
-      capturedUrl = String(url)
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
-      return new Response(JSON.stringify({}), {status: 200})
+    const testConnection = sandbox.stub().resolves({success: true})
+    await run(createAuthTestCommand(makeOptions({testConnection})), ['--profile', 'work'])
+
+    expect(testConnection.firstCall.args[0]).to.deep.include({
+      apiToken: 'work-tok',
+      host: 'https://work.example.com',
+    })
+  })
+
+  it('throws when the named profile does not exist', async () => {
+    await fs.outputJSON(configFilePath(), {
+      profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
     })
 
-    await AuthTest.run(['--profile', 'work'], import.meta.url)
-    expect(capturedUrl).to.match(/^https:\/\/work\.example\.com/)
+    try {
+      await run(createAuthTestCommand(makeOptions()), ['--profile', 'nonexistent'])
+      assert.fail('should have thrown')
+    } catch (error) {
+      // readConfig logs "Profile 'nonexistent' not found" then returns undefined;
+      // the command converts any undefined config into this error.
+      expect((error as Error).message).to.include('Missing authentication config')
+    }
   })
 })

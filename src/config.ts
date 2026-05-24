@@ -34,7 +34,8 @@ export function createProfileManager(configFile: string) {
     log: (message: string) => void,
   ): Promise<void> {
     const profiles = await readProfiles(configDir, log)
-    if (!profiles || !(profile in profiles)) {
+    if (!profiles) return
+    if (!(profile in profiles)) {
       log(`Profile '${profile}' not found`)
       return
     }
@@ -75,11 +76,10 @@ export function createProfileManager(configFile: string) {
 
       return raw as Config
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      if (msg.toLowerCase().includes('no such file or directory')) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         log('Missing authentication config')
       } else {
-        log(msg)
+        log(error instanceof Error ? error.message : String(error))
       }
 
       return undefined
@@ -102,11 +102,10 @@ export function createProfileManager(configFile: string) {
 
       return {}
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      if (msg.toLowerCase().includes('no such file or directory')) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         log('No authentication profiles found')
       } else {
-        log(msg)
+        log(error instanceof Error ? error.message : String(error))
       }
 
       return undefined
