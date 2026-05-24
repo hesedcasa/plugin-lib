@@ -20,7 +20,7 @@ export interface AuthCommandOptions {
   testConnection: (auth: any) => Promise<AuthResult>
 }
 
-export function createAuthAddCommand(options: AuthCommandOptions) {
+export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
   const {clearClients, configFile, hasHostFlag, serviceName, testConnection} = options
 
   return class AuthAdd extends Command {
@@ -93,7 +93,7 @@ export function createAuthAddCommand(options: AuthCommandOptions) {
   }
 }
 
-export function createAuthListCommand(options: Pick<AuthCommandOptions, 'configFile' | 'hasHostFlag'>) {
+export function createAuthListCommand(options: Pick<AuthCommandOptions, 'configFile' | 'hasHostFlag'>): typeof Command {
   const {configFile, hasHostFlag} = options
   const {getDefaultProfile, readProfiles} = createProfileManager(configFile)
 
@@ -151,7 +151,7 @@ ${details}`)
   }
 }
 
-export function createAuthProfileCommand(options: Pick<AuthCommandOptions, 'configFile'>) {
+export function createAuthProfileCommand(options: Pick<AuthCommandOptions, 'configFile'>): typeof Command {
   const {configFile} = options
   const {getDefaultProfile, setDefaultProfile} = createProfileManager(configFile)
 
@@ -181,7 +181,7 @@ export function createAuthProfileCommand(options: Pick<AuthCommandOptions, 'conf
   }
 }
 
-export function createAuthTestCommand(options: AuthCommandOptions) {
+export function createAuthTestCommand(options: AuthCommandOptions): typeof Command {
   const {clearClients, configFile, serviceName, testConnection} = options
   const {readConfig} = createProfileManager(configFile)
 
@@ -201,7 +201,7 @@ export function createAuthTestCommand(options: AuthCommandOptions) {
       const {flags} = await this.parse(AuthTest)
       const config = await readConfig(this.config.configDir, this.log.bind(this), flags.profile)
       if (!config) {
-        return {error: 'Missing authentication config', success: false}
+        this.error(`Missing authentication config. Run '${this.config.bin} auth add'.`)
       }
 
       action.start('Authenticating connection')
@@ -221,7 +221,7 @@ export function createAuthTestCommand(options: AuthCommandOptions) {
   }
 }
 
-export function createAuthUpdateCommand(options: AuthCommandOptions) {
+export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Command {
   const {clearClients, configFile, hasHostFlag, serviceName, testConnection} = options
 
   return class AuthUpdate extends Command {
@@ -290,8 +290,10 @@ export function createAuthUpdateCommand(options: AuthCommandOptions) {
           })))
         : undefined
 
-      const answer = await confirm({message: 'Override existing config?'})
-      if (!answer) return
+      if (process.stdout.isTTY) {
+        const answer = await confirm({message: 'Override existing config?'})
+        if (!answer) return
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const {auth: _, ...rest} = existing
