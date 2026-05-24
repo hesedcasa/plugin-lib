@@ -51,12 +51,6 @@
     "commands": "./dist/commands",
     "topicSeparator": " "
   },
-  "hesed": {
-    "auth": {
-      "testPath": "/rest/api/3/myself",
-      "method": "GET"
-    }
-  },
   "repository": "hesedcasa/plugin-lib",
   "scripts": {
     "build": "shx rm -rf dist tsconfig.tsbuildinfo && tsc -b",

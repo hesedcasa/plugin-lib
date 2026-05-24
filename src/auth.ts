@@ -61,10 +61,7 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
         // file doesn't exist yet
       }
 
-      const profiles = (existing.profiles ?? (existing.auth ? {default: existing.auth} : {})) as Record<
-        string,
-        unknown
-      >
+      const profiles = (existing.profiles ?? (existing.auth ? {default: existing.auth} : {})) as Record<string, unknown>
 
       if (profileName in profiles) {
         this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
@@ -244,6 +241,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
       }),
     }
 
+    // eslint-disable-next-line complexity
     public async run(): Promise<AuthResult | void> {
       const {flags} = await this.parse(AuthUpdate)
       const profileName = flags.profile ?? 'default'
@@ -275,8 +273,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
       const current = profiles[profileName] ?? {}
 
       const apiToken =
-        flags.token ??
-        (await input({default: current.apiToken, message: 'API Token:', prefill: 'tab', required: true}))
+        flags.token ?? (await input({default: current.apiToken, message: 'API Token:', prefill: 'tab', required: true}))
       const email =
         flags.email ??
         (await input({default: current.email, message: 'Account email:', prefill: 'tab', required: false}))

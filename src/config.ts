@@ -28,11 +28,7 @@ export function createProfileManager(configFile: string) {
     }
   }
 
-  async function setDefaultProfile(
-    configDir: string,
-    profile: string,
-    log: (message: string) => void,
-  ): Promise<void> {
+  async function setDefaultProfile(configDir: string, profile: string, log: (message: string) => void): Promise<void> {
     const profiles = await readProfiles(configDir, log)
     if (!profiles) return
     if (!(profile in profiles)) {

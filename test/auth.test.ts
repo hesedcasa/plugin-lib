@@ -8,8 +8,9 @@ import {type AuthCommandOptions, createAuthTestCommand} from '../src/auth.js'
 
 // Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
 // This helper isolates the one necessary cast so call sites stay readable.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const run = (Cls: ReturnType<typeof createAuthTestCommand>, argv: string[] = []) => (Cls as any).run(argv, import.meta.url)
+const run = (Cls: ReturnType<typeof createAuthTestCommand>, argv: string[] = []) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (Cls as any).run(argv, import.meta.url)
 
 describe('createAuthTestCommand', () => {
   const sandbox = createSandbox()
