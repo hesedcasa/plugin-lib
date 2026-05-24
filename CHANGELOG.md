@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/hesedcasa/plugin-lib/compare/v0.2.1...v0.2.2) (2026-05-24)
+
+
+### ♻️ Chores
+
+* derive config file path from oclif Config object ([2b1ba09](https://github.com/hesedcasa/plugin-lib/commit/2b1ba09835df0ba557b4f7ae2d3d966a202a94a7))
+* derive config file path from oclif Config object ([7789444](https://github.com/hesedcasa/plugin-lib/commit/77894448d3329c2c6e79c7946d129192444dd28b))
+
 ## [0.2.1](https://github.com/hesedcasa/plugin-lib/compare/v0.2.0...v0.2.1) (2026-05-24)
 
 
