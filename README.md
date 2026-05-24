@@ -26,7 +26,7 @@ $ npm install -g @hesed/plugin-lib
 $ @hesed/plugin-lib COMMAND
 running command...
 $ @hesed/plugin-lib (--version)
-@hesed/plugin-lib/0.2.0 linux-x64 node-v20.20.2
+@hesed/plugin-lib/0.2.1 linux-x64 node-v22.22.3
 $ @hesed/plugin-lib --help [COMMAND]
 USAGE
   $ @hesed/plugin-lib COMMAND
@@ -37,55 +37,5 @@ USAGE
 # Commands
 
 <!-- commands -->
-* [`@hesed/plugin-lib @hesed/plugin-lib auth add`](#hesedplugin-lib-hesedplugin-lib-auth-add)
-* [`@hesed/plugin-lib @hesed/plugin-lib auth test`](#hesedplugin-lib-hesedplugin-lib-auth-test)
 
-## `@hesed/plugin-lib @hesed/plugin-lib auth add`
-
-Add authentication
-
-```
-USAGE
-  $ @hesed/plugin-lib @hesed/plugin-lib auth add -t <value> -u <value> [--json] [-e <value>] [-p <value>]
-
-FLAGS
-  -e, --email=<value>    Account email
-  -p, --profile=<value>  Profile name
-  -t, --token=<value>    (required) API Token
-  -u, --url=<value>      (required) API endpoint URL (start with https://)
-
-GLOBAL FLAGS
-  --json  Format output as json.
-
-DESCRIPTION
-  Add authentication
-
-EXAMPLES
-  $ @hesed/plugin-lib @hesed/plugin-lib auth add
-
-  $ @hesed/plugin-lib @hesed/plugin-lib auth add --p work
-```
-
-## `@hesed/plugin-lib @hesed/plugin-lib auth test`
-
-Test authentication and connection
-
-```
-USAGE
-  $ @hesed/plugin-lib @hesed/plugin-lib auth test [--json] [-p <value>]
-
-FLAGS
-  -p, --profile=<value>  Authentication profile name
-
-GLOBAL FLAGS
-  --json  Format output as json.
-
-DESCRIPTION
-  Test authentication and connection
-
-EXAMPLES
-  $ @hesed/plugin-lib @hesed/plugin-lib auth test
-
-  $ @hesed/plugin-lib @hesed/plugin-lib auth test --p work
-```
 <!-- commandsstop -->
