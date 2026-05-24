@@ -18,15 +18,14 @@ describe('createAuthTestCommand', () => {
   let savedXdg: string | undefined
 
   // oclif derives configDir as path.join(XDG_CONFIG_HOME, config.bin)
-  // config.bin = "@hesed/plugin-lib" (from package.json name)
+  // config.bin = "@hesed/plugin-lib" (from package.json name); configFile = `${bin}-config.json`
   function configFilePath(): string {
-    return path.join(tmpDir, '@hesed/plugin-lib', 'test-cli-config.json')
+    return path.join(tmpDir, '@hesed/plugin-lib', '@hesed/plugin-lib-config.json')
   }
 
   function makeOptions(overrides?: Partial<AuthCommandOptions>): AuthCommandOptions {
     return {
       clearClients: sandbox.stub(),
-      configFile: 'test-cli-config.json',
       hasHostFlag: true,
       serviceName: 'TestService',
       testConnection: sandbox.stub().resolves({success: true}),
