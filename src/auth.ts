@@ -13,7 +13,6 @@ export interface AuthResult {
 
 export interface AuthCommandOptions {
   clearClients: () => void
-  configFile: string
   hasHostFlag: boolean
   serviceName: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -21,7 +20,7 @@ export interface AuthCommandOptions {
 }
 
 export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, configFile, hasHostFlag, serviceName, testConnection} = options
+  const {clearClients, hasHostFlag, serviceName, testConnection} = options
 
   return class AuthAdd extends Command {
     static override args = {}
@@ -52,7 +51,7 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
       const host = hasHostFlag
         ? (flags.url ?? (await input({message: `${serviceName} instance URL (start with https://):`, required: true})))
         : undefined
-      const configFilePath = path.join(this.config.configDir, configFile)
+      const configFilePath = path.join(this.config.configDir, `${this.config.bin}-config.json`)
 
       let existing: Record<string, unknown> = {}
       try {
@@ -90,9 +89,8 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
   }
 }
 
-export function createAuthListCommand(options: Pick<AuthCommandOptions, 'configFile' | 'hasHostFlag'>): typeof Command {
-  const {configFile, hasHostFlag} = options
-  const {getDefaultProfile, readProfiles} = createProfileManager(configFile)
+export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHostFlag'>): typeof Command {
+  const {hasHostFlag} = options
 
   interface ProfileInfo {
     apiToken: string
@@ -115,14 +113,15 @@ export function createAuthListCommand(options: Pick<AuthCommandOptions, 'configF
 
     public async run(): Promise<ListResult> {
       await this.parse(AuthList)
-      const profiles: Profiles | undefined = await readProfiles(this.config.configDir, this.log.bind(this))
+      const {getDefaultProfile, readProfiles} = createProfileManager(this.config)
+      const profiles: Profiles | undefined = await readProfiles(this.log.bind(this))
 
       if (!profiles || Object.keys(profiles).length === 0) {
         this.log('No authentication profiles found. Run auth:add to add one.')
         return {profiles: []}
       }
 
-      const defaultProfile = await getDefaultProfile(this.config.configDir)
+      const defaultProfile = await getDefaultProfile()
       const profileList: ProfileInfo[] = Object.entries(profiles).map(([name, auth]) => ({
         ...(auth.email && {email: auth.email}),
         ...(hasHostFlag && auth.host && {host: auth.host}),
@@ -148,10 +147,7 @@ ${details}`)
   }
 }
 
-export function createAuthProfileCommand(options: Pick<AuthCommandOptions, 'configFile'>): typeof Command {
-  const {configFile} = options
-  const {getDefaultProfile, setDefaultProfile} = createProfileManager(configFile)
-
+export function createAuthProfileCommand(): typeof Command {
   return class AuthProfile extends Command {
     static override args = {}
     static override description = 'Set or show the default authentication profile'
@@ -166,21 +162,21 @@ export function createAuthProfileCommand(options: Pick<AuthCommandOptions, 'conf
 
     public async run(): Promise<void> {
       const {flags} = await this.parse(AuthProfile)
+      const {getDefaultProfile, setDefaultProfile} = createProfileManager(this.config)
 
       if (flags.default) {
-        await setDefaultProfile(this.config.configDir, flags.default, this.log.bind(this))
+        await setDefaultProfile(flags.default, this.log.bind(this))
         return
       }
 
-      const current = await getDefaultProfile(this.config.configDir)
+      const current = await getDefaultProfile()
       this.log(current)
     }
   }
 }
 
 export function createAuthTestCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, configFile, serviceName, testConnection} = options
-  const {readConfig} = createProfileManager(configFile)
+  const {clearClients, serviceName, testConnection} = options
 
   return class AuthTest extends Command {
     static override args = {}
@@ -196,13 +192,13 @@ export function createAuthTestCommand(options: AuthCommandOptions): typeof Comma
 
     public async run(): Promise<AuthResult> {
       const {flags} = await this.parse(AuthTest)
-      const config = await readConfig(this.config.configDir, this.log.bind(this), flags.profile)
-      if (!config) {
+      const authConfig = await createProfileManager(this.config, flags.profile).loadAuthConfig()
+      if (!authConfig) {
         this.error(`Missing authentication config. Run '${this.config.bin} auth add'.`)
       }
 
       action.start('Authenticating connection')
-      const result = await testConnection(config.auth)
+      const result = await testConnection(authConfig)
       clearClients()
 
       if (result.success) {
@@ -219,7 +215,7 @@ export function createAuthTestCommand(options: AuthCommandOptions): typeof Comma
 }
 
 export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, configFile, hasHostFlag, serviceName, testConnection} = options
+  const {clearClients, hasHostFlag, serviceName, testConnection} = options
 
   return class AuthUpdate extends Command {
     static override args = {}
@@ -245,7 +241,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
     public async run(): Promise<AuthResult | void> {
       const {flags} = await this.parse(AuthUpdate)
       const profileName = flags.profile ?? 'default'
-      const configFilePath = path.join(this.config.configDir, configFile)
+      const configFilePath = path.join(this.config.configDir, `${this.config.bin}-config.json`)
 
       let existing: Record<string, unknown>
       try {
