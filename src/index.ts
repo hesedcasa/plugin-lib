@@ -2,6 +2,7 @@ export {type ApiResult, buildAuthHeader, createApiClient} from './api.js'
 export {
   type AuthCommandOptions,
   createAuthAddCommand,
+  createAuthDeleteCommand,
   createAuthListCommand,
   createAuthProfileCommand,
   createAuthTestCommand,

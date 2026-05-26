@@ -45,6 +45,18 @@ export function createProfileManager(config: Config, profile?: string) {
     }
   }
 
+  async function clearDefaultProfile(): Promise<void> {
+    let raw: Record<string, unknown> = {}
+    try {
+      raw = await fs.readJSON(cp)
+    } catch {
+      // file doesn't exist yet
+    }
+
+    delete raw.defaultProfile
+    await fs.outputJSON(cp, raw, {spaces: 2})
+  }
+
   async function setDefaultProfile(profileName: string, log: (message: string) => void): Promise<void> {
     let raw: Record<string, unknown>
     try {
@@ -93,5 +105,5 @@ export function createProfileManager(config: Config, profile?: string) {
     await fs.outputJSON(cp, {...rest, profiles}, {mode: 0o600})
   }
 
-  return {getDefaultProfile, loadAuthConfig, readProfiles, saveProfiles, setDefaultProfile}
+  return {clearDefaultProfile, getDefaultProfile, loadAuthConfig, readProfiles, saveProfiles, setDefaultProfile}
 }

@@ -217,4 +217,38 @@ describe('createProfileManager', () => {
       expect(outputStub.firstCall.args[1]).to.have.property('defaultProfile', 'work')
     })
   })
+
+  describe('clearDefaultProfile', () => {
+    it('removes the defaultProfile key from config', async () => {
+      sandbox.stub(fs, 'readJSON').resolves({defaultProfile: 'work', profiles: {work: {apiToken: 't', host: 'h'}}})
+      const outputStub = sandbox.stub(fs, 'outputJSON').resolves()
+
+      const {clearDefaultProfile} = createProfileManager(makeConfig())
+      await clearDefaultProfile()
+
+      expect(outputStub.calledOnce).to.be.true
+      expect(outputStub.firstCall.args[1]).to.not.have.property('defaultProfile')
+    })
+
+    it('preserves other config keys', async () => {
+      sandbox.stub(fs, 'readJSON').resolves({defaultProfile: 'work', profiles: {work: {apiToken: 't', host: 'h'}}})
+      const outputStub = sandbox.stub(fs, 'outputJSON').resolves()
+
+      const {clearDefaultProfile} = createProfileManager(makeConfig())
+      await clearDefaultProfile()
+
+      expect(outputStub.firstCall.args[1]).to.have.property('profiles')
+    })
+
+    it('handles missing config file', async () => {
+      sandbox.stub(fs, 'readJSON').rejects({code: 'ENOENT'})
+      const outputStub = sandbox.stub(fs, 'outputJSON').resolves()
+
+      const {clearDefaultProfile} = createProfileManager(makeConfig())
+      await clearDefaultProfile()
+
+      expect(outputStub.calledOnce).to.be.true
+      expect(outputStub.firstCall.args[1]).to.deep.equal({})
+    })
+  })
 })
