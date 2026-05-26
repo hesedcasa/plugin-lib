@@ -4,19 +4,15 @@ import {action} from '@oclif/core/ux'
 import {default as fs} from 'fs-extra'
 import {default as path} from 'node:path'
 
+import {type ApiResult} from './api.js'
 import {createProfileManager, type Profiles} from './config.js'
-
-export interface AuthResult {
-  error?: string
-  success: boolean
-}
 
 export interface AuthCommandOptions {
   clearClients: () => void
   hasHostFlag: boolean
   serviceName: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  testConnection: (auth: any) => Promise<AuthResult>
+  testConnection: (auth: any) => Promise<ApiResult>
 }
 
 export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
@@ -42,7 +38,7 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
       }),
     }
 
-    public async run(): Promise<AuthResult> {
+    public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthAdd)
       const profileName =
         flags.profile ?? (process.stdout.isTTY ? await input({message: 'Profile name:', required: true}) : 'default')
@@ -190,7 +186,7 @@ export function createAuthTestCommand(options: AuthCommandOptions): typeof Comma
       profile: Flags.string({char: 'p', description: 'Authentication profile name', required: false}),
     }
 
-    public async run(): Promise<AuthResult> {
+    public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthTest)
       const authConfig = await createProfileManager(this.config, flags.profile).loadAuthConfig()
       if (!authConfig) {
@@ -238,7 +234,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
     }
 
     // eslint-disable-next-line complexity
-    public async run(): Promise<AuthResult | void> {
+    public async run(): Promise<ApiResult | void> {
       const {flags} = await this.parse(AuthUpdate)
       const profileName = flags.profile ?? 'default'
       const configFilePath = path.join(this.config.configDir, `${this.config.bin}-config.json`)
