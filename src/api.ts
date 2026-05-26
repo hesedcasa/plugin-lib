@@ -12,9 +12,9 @@ export function buildAuthHeader(config: AuthConfig): string {
     : `Bearer ${config.apiToken}`
 }
 
-export function createApiClient<T extends {clearClients(): void}>(
+export function createApiClient<C, T extends {clearClients(): void}>(
   serviceName: string,
-  factory: (config: AuthConfig) => T,
+  factory: (config: C) => T,
 ) {
   let instance: null | T = null
   return {
@@ -24,7 +24,7 @@ export function createApiClient<T extends {clearClients(): void}>(
         instance = null
       }
     },
-    async getClient(config: AuthConfig): Promise<T> {
+    async getClient(config: C): Promise<T> {
       if (instance) return instance
       try {
         instance = factory(config)

@@ -8,7 +8,7 @@ export interface AuthConfig {
   host: string
 }
 
-export type Profiles = Record<string, AuthConfig>
+export type Profiles<T = AuthConfig> = Record<string, T>
 
 function logFsError(error: unknown, missingMsg: string, log: (message: string) => void): void {
   if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -18,19 +18,19 @@ function logFsError(error: unknown, missingMsg: string, log: (message: string) =
   }
 }
 
-export function createProfileManager(config: Config, profile?: string) {
+export function createProfileManager<T = AuthConfig>(config: Config, profile?: string) {
   const cp = path.join(config.configDir, `${config.bin}-config.json`)
 
-  async function loadAuthConfig(): Promise<AuthConfig | undefined> {
+  async function loadAuthConfig(): Promise<T | undefined> {
     try {
       const raw = await fs.readJSON(cp)
       if (raw.profiles) {
         const resolvedProfile = profile ?? raw.defaultProfile ?? 'default'
-        return raw.profiles[resolvedProfile] as AuthConfig | undefined
+        return raw.profiles[resolvedProfile] as T | undefined
       }
 
       if (profile && profile !== 'default') return undefined
-      return raw.auth as AuthConfig | undefined
+      return raw.auth as T | undefined
     } catch {
       return undefined
     }
@@ -79,12 +79,12 @@ export function createProfileManager(config: Config, profile?: string) {
     log(`Default profile set to '${profileName}'`)
   }
 
-  async function readProfiles(log: (message: string) => void): Promise<Profiles | undefined> {
+  async function readProfiles(log: (message: string) => void): Promise<Profiles<T> | undefined> {
     try {
       const raw = await fs.readJSON(cp)
-      if (raw.profiles) return raw.profiles as Profiles
+      if (raw.profiles) return raw.profiles as Profiles<T>
       // backward compat: old { auth: {...} } format
-      if (raw.auth) return {default: raw.auth as AuthConfig}
+      if (raw.auth) return {default: raw.auth as T}
       return {}
     } catch (error: unknown) {
       logFsError(error, 'No authentication profiles found', log)
@@ -92,7 +92,7 @@ export function createProfileManager(config: Config, profile?: string) {
     }
   }
 
-  async function saveProfiles(profiles: Profiles): Promise<void> {
+  async function saveProfiles(profiles: Profiles<T>): Promise<void> {
     let raw: Record<string, unknown> = {}
     try {
       raw = await fs.readJSON(cp)
