@@ -210,6 +210,61 @@ export function createAuthTestCommand(options: AuthCommandOptions): typeof Comma
   }
 }
 
+export function createAuthDeleteCommand(): typeof Command {
+  return class AuthDelete extends Command {
+    static override args = {}
+    static override description = 'Delete an authentication profile'
+    static override enableJsonFlag = true
+    static override examples = [
+      '<%= config.bin %> <%= command.id %>',
+      '<%= config.bin %> <%= command.id %> --profile work',
+    ]
+    static override flags = {
+      profile: Flags.string({char: 'p', description: 'Profile name to delete', required: false}),
+    }
+
+    public async run(): Promise<void> {
+      const {flags} = await this.parse(AuthDelete)
+      const {clearDefaultProfile, getDefaultProfile, readProfiles, saveProfiles, setDefaultProfile} =
+        createProfileManager(this.config)
+
+      const profiles = await readProfiles(this.log.bind(this))
+      if (!profiles || Object.keys(profiles).length === 0) {
+        this.error('No authentication profiles found.')
+      }
+
+      const profileName =
+        flags.profile ??
+        (process.stdout.isTTY ? await input({message: 'Profile name to delete:', required: true}) : 'default')
+
+      if (!(profileName in profiles)) {
+        this.error(`Profile '${profileName}' does not exist.`)
+      }
+
+      if (process.stdout.isTTY) {
+        const answer = await confirm({message: `Delete profile '${profileName}'?`})
+        if (!answer) return
+      }
+
+      const defaultProfile = await getDefaultProfile()
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const {[profileName]: _, ...remaining} = profiles
+
+      await saveProfiles(remaining)
+
+      // If deleted profile was the default, clear or update default
+      if (profileName === defaultProfile) {
+        const remainingKeys = Object.keys(remaining)
+        await (remainingKeys.length > 0
+          ? setDefaultProfile(remainingKeys[0], this.log.bind(this))
+          : clearDefaultProfile())
+      }
+
+      this.log(`Profile '${profileName}' deleted.`)
+    }
+  }
+}
+
 export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Command {
   const {clearClients, hasHostFlag, serviceName, testConnection} = options
 
