@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/hesedcasa/plugin-lib/compare/v0.2.2...v0.3.0) (2026-05-26)
+
+
+### 🎉 Features
+
+* add ApiResult, buildAuthHeader, createApiClient to shared exports ([96d4b08](https://github.com/hesedcasa/plugin-lib/commit/96d4b083cc05b7045841a8a34dac4fc1297b931e))
+* add ApiResult, buildAuthHeader, createApiClient to shared exports ([6113fb8](https://github.com/hesedcasa/plugin-lib/commit/6113fb8a379f91971222937693b7ab350295a281))
+
 ## [0.2.2](https://github.com/hesedcasa/plugin-lib/compare/v0.2.1...v0.2.2) (2026-05-24)
 
 
