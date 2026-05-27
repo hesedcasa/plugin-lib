@@ -12,10 +12,7 @@ export function buildAuthHeader(config: AuthConfig): string {
     : `Bearer ${config.apiToken}`
 }
 
-export function createApiClient<C, T extends {clearClients(): void}>(
-  serviceName: string,
-  factory: (config: C) => T,
-) {
+export function createApiClient<C, T extends {clearClients(): void}>(serviceName: string, factory: (config: C) => T) {
   let instance: null | T = null
   return {
     clearClients(): void {

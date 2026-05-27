@@ -18,7 +18,7 @@ export interface FieldDef {
 
 export interface AuthCommandOptions {
   clearClients: () => void
-  fields?: FieldDef[]  // when provided, overrides legacy apiToken/email/host behavior
+  fields?: FieldDef[] // when provided, overrides legacy apiToken/email/host behavior
   hasHostFlag: boolean
   serviceName: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,16 +33,17 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
     const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
     for (const f of fields) {
       dynamicFlags[f.name] = Flags.string({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         char: f.char as any,
         description: f.description,
         ...(f.default ? {default: f.default} : {}),
-      })
+      }) as ReturnType<typeof Flags.string>
     }
 
     return class extends Command {
       static override description = `Add ${serviceName} auth profile`
       static override flags = {
-        profile: Flags.string({char: 'p', description: 'Profile name', default: 'default'}),
+        profile: Flags.string({char: 'p', default: 'default', description: 'Profile name'}),
         ...dynamicFlags,
       }
 
@@ -51,13 +52,16 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
         const profileName = flags.profile ?? 'default'
         const auth: Record<string, string> = {}
         for (const f of fields) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          auth[f.name] = (flags[f.name] as string | undefined) ??
-            await input({message: f.message, ...(f.masked ? {} : {})})
+          auth[f.name] =
+            (flags[f.name] as string | undefined) ??
+            // eslint-disable-next-line no-await-in-loop
+            (await input({message: f.message, ...(f.masked ? {} : {})}))
         }
+
         const pm = createProfileManager(this.config, profileName)
         await pm.saveProfiles({
-          ...(await pm.readProfiles(this.log.bind(this)) ?? {}),
+          ...(await pm.readProfiles(this.log.bind(this))),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           [profileName]: auth as any,
         })
 
@@ -145,16 +149,16 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
   }
 }
 
-export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHostFlag' | 'fields'>): typeof Command {
+export function createAuthListCommand(options: Pick<AuthCommandOptions, 'fields' | 'hasHostFlag'>): typeof Command {
   const {fields, hasHostFlag} = options
 
   interface ProfileInfo {
+    [key: string]: unknown
     apiToken: string
     default?: boolean
     email?: string
     host?: string
     name: string
-    [key: string]: unknown
   }
 
   interface ListResult {
@@ -189,17 +193,18 @@ export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHost
             name,
           }
           for (const f of fields) {
-            const val = (auth as Record<string, string>)[f.name]
+            const val = (auth as unknown as Record<string, string>)[f.name]
             if (val !== undefined) {
               entry[f.name] = f.masked ? `${String(val).slice(0, 3)}...${String(val).slice(-4)}` : val
             }
           }
+
           return entry
         })
 
         for (const profile of profileList) {
           const details = fields
-            .map((f) => (profile[f.name] !== undefined ? `  ${f.name}: ${profile[f.name]}` : ''))
+            .map((f) => (profile[f.name] === undefined ? '' : `  ${f.name}: ${profile[f.name]}`))
             .filter(Boolean)
             .join('\n')
           this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
@@ -363,16 +368,21 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
     const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
     for (const f of fields) {
       dynamicFlags[f.name] = Flags.string({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         char: f.char as any,
         description: f.description,
         ...(f.default ? {default: f.default} : {}),
-      })
+      }) as ReturnType<typeof Flags.string>
     }
 
     return class extends Command {
       static override description = `Update ${serviceName} auth profile`
       static override flags = {
-        profile: Flags.string({char: 'p', description: 'Profile name to update (default: "default")', default: 'default'}),
+        profile: Flags.string({
+          char: 'p',
+          default: 'default',
+          description: 'Profile name to update (default: "default")',
+        }),
         ...dynamicFlags,
       }
 
@@ -380,17 +390,14 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
         const {flags} = await this.parse(this.constructor as typeof Command)
         const profileName = flags.profile ?? 'default'
         const pm = createProfileManager(this.config, profileName)
-        const existing = (await pm.loadAuthConfig() ?? {}) as Record<string, string>
+        const existing = ((await pm.loadAuthConfig()) ?? {}) as Record<string, string>
 
         const auth: Record<string, string> = {}
         for (const f of fields) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const flagVal = flags[f.name] as string | undefined
-          auth[f.name] = flagVal ?? await input({
-            default: existing[f.name],
-            message: f.message,
-            prefill: 'tab',
-          })
+          auth[f.name] =
+            (flags[f.name] as string | undefined) ??
+            // eslint-disable-next-line no-await-in-loop
+            (await input({default: existing[f.name], message: f.message, prefill: 'tab'}))
         }
 
         if (process.stdout.isTTY) {
@@ -398,9 +405,10 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
           if (!answer) return
         }
 
-        const allProfiles = await pm.readProfiles(this.log.bind(this)) ?? {}
+        const allProfiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
         await pm.saveProfiles({
           ...allProfiles,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           [profileName]: auth as any,
         })
 
