@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0](https://github.com/hesedcasa/plugin-lib/compare/v0.3.0...v0.4.0) (2026-05-27)
+
+
+### 🎉 Features
+
+* add createAuthDeleteCommand for removing auth profiles ([6fc085f](https://github.com/hesedcasa/plugin-lib/commit/6fc085f3b6daad8c2a7e020ed0e39474ee226f9e))
+* add createAuthDeleteCommand for removing auth profiles ([eaeac9f](https://github.com/hesedcasa/plugin-lib/commit/eaeac9f25a5e92f69827452d4676ab1c43014e37))
+* add generic type params and FieldDef for multi-profile support ([928e741](https://github.com/hesedcasa/plugin-lib/commit/928e7418cdfd0a6996b019fdd28060b91bc3e6de))
+* add generic type params and FieldDef for multi-profile support ([8caf3ec](https://github.com/hesedcasa/plugin-lib/commit/8caf3ec2a3b6fc6d5015db241dc536cef931863a))
+
 ## [0.3.0](https://github.com/hesedcasa/plugin-lib/compare/v0.2.2...v0.3.0) (2026-05-26)
 
 
