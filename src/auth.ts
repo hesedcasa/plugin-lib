@@ -7,8 +7,18 @@ import {default as path} from 'node:path'
 import {type ApiResult} from './api.js'
 import {createProfileManager, type Profiles} from './config.js'
 
+export interface FieldDef {
+  char: string
+  default?: string
+  description: string
+  masked?: boolean
+  message: string
+  name: string
+}
+
 export interface AuthCommandOptions {
   clearClients: () => void
+  fields?: FieldDef[] // when provided, overrides legacy apiToken/email/host behavior
   hasHostFlag: boolean
   serviceName: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,8 +26,62 @@ export interface AuthCommandOptions {
 }
 
 export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, hasHostFlag, serviceName, testConnection} = options
+  const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
 
+  if (fields) {
+    // Build dynamic flags from field definitions
+    const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
+    for (const f of fields) {
+      dynamicFlags[f.name] = Flags.string({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        char: f.char as any,
+        description: f.description,
+        ...(f.default ? {default: f.default} : {}),
+      }) as ReturnType<typeof Flags.string>
+    }
+
+    return class extends Command {
+      static override description = `Add ${serviceName} auth profile`
+      static override flags = {
+        profile: Flags.string({char: 'p', default: 'default', description: 'Profile name'}),
+        ...dynamicFlags,
+      }
+
+      async run(): Promise<void> {
+        const {flags} = await this.parse(this.constructor as typeof Command)
+        const profileName = flags.profile ?? 'default'
+        const auth: Record<string, string> = {}
+        for (const f of fields) {
+          auth[f.name] =
+            (flags[f.name] as string | undefined) ??
+            // eslint-disable-next-line no-await-in-loop
+            (await input({message: f.message, ...(f.masked ? {} : {})}))
+        }
+
+        const pm = createProfileManager(this.config, profileName)
+        await pm.saveProfiles({
+          ...(await pm.readProfiles(this.log.bind(this))),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          [profileName]: auth as any,
+        })
+
+        action.start('Authenticating')
+        const result = await testConnection(auth)
+        clearClients()
+
+        if (result.success) {
+          action.stop('✓ successful')
+          const profileSuffix = profileName === 'default' ? '' : ` as profile '${profileName}'`
+          this.log(`Profile "${profileName}" saved${profileSuffix}.`)
+        } else {
+          action.stop('✗ failed')
+          this.error('Authentication is invalid. Please check your credentials.')
+        }
+      }
+    }
+  }
+
+  // Legacy behavior (unchanged, for Jira)
   return class AuthAdd extends Command {
     static override args = {}
     static override description = `Add ${serviceName} authentication`
@@ -85,10 +149,11 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
   }
 }
 
-export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHostFlag'>): typeof Command {
-  const {hasHostFlag} = options
+export function createAuthListCommand(options: Pick<AuthCommandOptions, 'fields' | 'hasHostFlag'>): typeof Command {
+  const {fields, hasHostFlag} = options
 
   interface ProfileInfo {
+    [key: string]: unknown
     apiToken: string
     default?: boolean
     email?: string
@@ -118,6 +183,37 @@ export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHost
       }
 
       const defaultProfile = await getDefaultProfile()
+
+      if (fields) {
+        // Dynamic fields display
+        const profileList: ProfileInfo[] = Object.entries(profiles).map(([name, auth]) => {
+          const entry: ProfileInfo = {
+            ...(name === defaultProfile && {default: true}),
+            apiToken: '',
+            name,
+          }
+          for (const f of fields) {
+            const val = (auth as unknown as Record<string, string>)[f.name]
+            if (val !== undefined) {
+              entry[f.name] = f.masked ? `${String(val).slice(0, 3)}...${String(val).slice(-4)}` : val
+            }
+          }
+
+          return entry
+        })
+
+        for (const profile of profileList) {
+          const details = fields
+            .map((f) => (profile[f.name] === undefined ? '' : `  ${f.name}: ${profile[f.name]}`))
+            .filter(Boolean)
+            .join('\n')
+          this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
+        }
+
+        return {profiles: profileList}
+      }
+
+      // Legacy display
       const profileList: ProfileInfo[] = Object.entries(profiles).map(([name, auth]) => ({
         ...(auth.email && {email: auth.email}),
         ...(hasHostFlag && auth.host && {host: auth.host}),
@@ -134,8 +230,7 @@ export function createAuthListCommand(options: Pick<AuthCommandOptions, 'hasHost
         ]
           .filter(Boolean)
           .join('\n')
-        this.log(`${profile.name}${profile.default ? ' (default):' : ':'}
-${details}`)
+        this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
       }
 
       return {profiles: profileList}
@@ -266,8 +361,76 @@ export function createAuthDeleteCommand(): typeof Command {
 }
 
 export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, hasHostFlag, serviceName, testConnection} = options
+  const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
 
+  if (fields) {
+    // Build dynamic flags from field definitions
+    const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
+    for (const f of fields) {
+      dynamicFlags[f.name] = Flags.string({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        char: f.char as any,
+        description: f.description,
+        ...(f.default ? {default: f.default} : {}),
+      }) as ReturnType<typeof Flags.string>
+    }
+
+    return class extends Command {
+      static override description = `Update ${serviceName} auth profile`
+      static override flags = {
+        profile: Flags.string({
+          char: 'p',
+          default: 'default',
+          description: 'Profile name to update (default: "default")',
+        }),
+        ...dynamicFlags,
+      }
+
+      async run(): Promise<ApiResult | void> {
+        const {flags} = await this.parse(this.constructor as typeof Command)
+        const profileName = flags.profile ?? 'default'
+        const pm = createProfileManager(this.config, profileName)
+        const existing = ((await pm.loadAuthConfig()) ?? {}) as Record<string, string>
+
+        const auth: Record<string, string> = {}
+        for (const f of fields) {
+          auth[f.name] =
+            (flags[f.name] as string | undefined) ??
+            // eslint-disable-next-line no-await-in-loop
+            (await input({default: existing[f.name], message: f.message, prefill: 'tab'}))
+        }
+
+        if (process.stdout.isTTY) {
+          const answer = await confirm({message: 'Override existing config?'})
+          if (!answer) return
+        }
+
+        const allProfiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
+        await pm.saveProfiles({
+          ...allProfiles,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          [profileName]: auth as any,
+        })
+
+        action.start('Authenticating')
+        const result = await testConnection(auth)
+        clearClients()
+
+        if (result.success) {
+          action.stop('✓ successful')
+          const profileSuffix = profileName === 'default' ? '' : ` for profile '${profileName}'`
+          this.log(`Authentication${profileSuffix} updated successfully`)
+        } else {
+          action.stop('✗ failed')
+          this.error('Authentication is invalid. Please check your credentials.')
+        }
+
+        return result
+      }
+    }
+  }
+
+  // Legacy behavior (unchanged, for Jira)
   return class AuthUpdate extends Command {
     static override args = {}
     static override description = 'Update existing authentication profile'
