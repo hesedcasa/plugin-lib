@@ -1,8 +1,6 @@
 import {confirm, input} from '@inquirer/prompts'
 import {Command, Flags} from '@oclif/core'
 import {action} from '@oclif/core/ux'
-import {default as fs} from 'fs-extra'
-import {default as path} from 'node:path'
 
 import {type ApiResult} from './api.js'
 import {createProfileManager, type Profiles} from './config.js'
@@ -25,42 +23,51 @@ export interface AuthCommandOptions {
   testConnection: (auth: any) => Promise<ApiResult>
 }
 
+function buildDynamicFlags(fields: FieldDef[]): Record<string, ReturnType<typeof Flags.string>> {
+  const result: Record<string, ReturnType<typeof Flags.string>> = {}
+  for (const f of fields) {
+    result[f.name] = Flags.string({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      char: f.char as any,
+      description: f.description,
+      ...(f.default ? {default: f.default} : {}),
+    }) as ReturnType<typeof Flags.string>
+  }
+
+  return result
+}
+
 export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
   const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
 
   if (fields) {
-    // Build dynamic flags from field definitions
-    const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
-    for (const f of fields) {
-      dynamicFlags[f.name] = Flags.string({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        char: f.char as any,
-        description: f.description,
-        ...(f.default ? {default: f.default} : {}),
-      }) as ReturnType<typeof Flags.string>
-    }
-
     return class extends Command {
       static override description = `Add ${serviceName} auth profile`
       static override flags = {
         profile: Flags.string({char: 'p', default: 'default', description: 'Profile name'}),
-        ...dynamicFlags,
+        ...buildDynamicFlags(fields!),
       }
 
       async run(): Promise<void> {
         const {flags} = await this.parse(this.constructor as typeof Command)
         const profileName = flags.profile ?? 'default'
+        const pm = createProfileManager(this.config, profileName)
+        const existingProfiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
+
+        if (profileName in existingProfiles) {
+          this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
+        }
+
         const auth: Record<string, string> = {}
         for (const f of fields) {
           auth[f.name] =
             (flags[f.name] as string | undefined) ??
             // eslint-disable-next-line no-await-in-loop
-            (await input({message: f.message, ...(f.masked ? {} : {})}))
+            (await input({message: f.message}))
         }
 
-        const pm = createProfileManager(this.config, profileName)
         await pm.saveProfiles({
-          ...(await pm.readProfiles(this.log.bind(this))),
+          ...existingProfiles,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           [profileName]: auth as any,
         })
@@ -81,7 +88,7 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
     }
   }
 
-  // Legacy behavior (unchanged, for Jira)
+  // Legacy behavior (for Jira-style apiToken/email/host)
   return class AuthAdd extends Command {
     static override args = {}
     static override description = `Add ${serviceName} authentication`
@@ -111,25 +118,18 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
       const host = hasHostFlag
         ? (flags.url ?? (await input({message: `${serviceName} instance URL (start with https://):`, required: true})))
         : undefined
-      const configFilePath = path.join(this.config.configDir, `${this.config.bin}-config.json`)
 
-      let existing: Record<string, unknown> = {}
-      try {
-        existing = await fs.readJSON(configFilePath)
-      } catch {
-        // file doesn't exist yet
-      }
-
-      const profiles = (existing.profiles ?? (existing.auth ? {default: existing.auth} : {})) as Record<string, unknown>
+      const pm = createProfileManager(this.config, profileName)
+      const profiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
 
       if (profileName in profiles) {
         this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
       }
 
-      profiles[profileName] = {apiToken, ...(email && {email}), ...(host && {host})}
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const {auth: _auth, ...rest} = existing
-      await fs.outputJSON(configFilePath, {...rest, profiles}, {mode: 0o600})
+      await pm.saveProfiles({
+        ...profiles,
+        [profileName]: {apiToken, ...(email && {email}), ...(host && {host})},
+      })
 
       action.start('Authenticating')
       const result = await testConnection({apiToken, ...(email && {email}), ...(host && {host})})
@@ -364,16 +364,6 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
   const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
 
   if (fields) {
-    // Build dynamic flags from field definitions
-    const dynamicFlags: Record<string, ReturnType<typeof Flags.string>> = {}
-    for (const f of fields) {
-      dynamicFlags[f.name] = Flags.string({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        char: f.char as any,
-        description: f.description,
-        ...(f.default ? {default: f.default} : {}),
-      }) as ReturnType<typeof Flags.string>
-    }
 
     return class extends Command {
       static override description = `Update ${serviceName} auth profile`
@@ -383,7 +373,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
           default: 'default',
           description: 'Profile name to update (default: "default")',
         }),
-        ...dynamicFlags,
+        ...buildDynamicFlags(fields!),
       }
 
       async run(): Promise<ApiResult | void> {
@@ -451,36 +441,22 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
       }),
     }
 
-    // eslint-disable-next-line complexity
     public async run(): Promise<ApiResult | void> {
       const {flags} = await this.parse(AuthUpdate)
       const profileName = flags.profile ?? 'default'
-      const configFilePath = path.join(this.config.configDir, `${this.config.bin}-config.json`)
+      const pm = createProfileManager(this.config, profileName)
+      const profiles = await pm.readProfiles(this.log.bind(this))
 
-      let existing: Record<string, unknown>
-      try {
-        existing = await fs.readJSON(configFilePath)
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error)
-        if (msg.toLowerCase().includes('no such file or directory')) {
-          this.log('Run auth:add instead')
-        } else {
-          this.log(msg)
-        }
-
+      if (!profiles) {
+        this.log('Run auth:add instead')
         return
       }
 
-      const legacyAuth = existing.auth as Record<string, string> | undefined
-      const profiles = (existing.profiles ?? (legacyAuth ? {default: legacyAuth} : {})) as Record<
-        string,
-        Record<string, string>
-      >
       if (!profiles[profileName]) {
         this.error(`Profile '${profileName}' does not exist. Use '${this.config.bin} auth add' to create it.`)
       }
 
-      const current = profiles[profileName] ?? {}
+      const current = profiles[profileName] as unknown as Record<string, string>
 
       const apiToken =
         flags.token ?? (await input({default: current.apiToken, message: 'API Token:', prefill: 'tab', required: true}))
@@ -502,16 +478,10 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
         if (!answer) return
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const {auth: _, ...rest} = existing
-      const updatedConfig = {
-        ...rest,
-        profiles: {
-          ...profiles,
-          [profileName]: {apiToken, ...(email && {email}), ...(host && {host})},
-        },
-      }
-      await fs.outputJSON(configFilePath, updatedConfig, {mode: 0o600})
+      await pm.saveProfiles({
+        ...profiles,
+        [profileName]: {apiToken, ...(email && {email}), ...(host && {host})},
+      })
 
       action.start('Authenticating')
       const result = await testConnection({apiToken, ...(email && {email}), ...(host && {host})})

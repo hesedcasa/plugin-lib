@@ -5,7 +5,7 @@ import {default as path} from 'node:path'
 export interface AuthConfig {
   apiToken: string
   email?: string
-  host: string
+  host?: string
 }
 
 export type Profiles<T = AuthConfig> = Record<string, T>
