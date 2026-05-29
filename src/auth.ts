@@ -1,4 +1,4 @@
-import {confirm, input} from '@inquirer/prompts'
+import {confirm, input, password} from '@inquirer/prompts'
 import {Command, Flags} from '@oclif/core'
 import {action} from '@oclif/core/ux'
 
@@ -62,6 +62,14 @@ async function promptFieldValue(
       default: currentValue === undefined ? (f.default as boolean | undefined) : Boolean(currentValue),
       message: f.message,
     })
+  }
+
+  if (f.masked) {
+    // For masked fields use a password prompt. On update, empty input keeps the existing value.
+    const hint = currentValue === undefined ? '' : ' (press Enter to keep existing)'
+    const raw = await password({mask: '*', message: `${f.message}${hint}`})
+    const value = raw !== '' || currentValue === undefined ? raw : String(currentValue)
+    return f.type === 'number' ? Number(value) : value
   }
 
   const inputDefaults =
@@ -399,7 +407,6 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
   const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
 
   if (fields) {
-
     return class extends Command {
       static override description = `Update ${serviceName} auth profile`
       static override flags = {
