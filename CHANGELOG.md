@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/hesedcasa/plugin-lib/compare/v0.4.0...v0.5.0) (2026-05-29)
+
+
+### 🎉 Features
+
+* **auth:** support number and boolean field types in dynamic auth commands ([1dfd84e](https://github.com/hesedcasa/plugin-lib/commit/1dfd84e8c2bab3654246ad53c9c14dfe30822674))
+
+
+### 🛠️ Fixes
+
+* **auth:** make masked fields actually use a password prompt ([7f4aea6](https://github.com/hesedcasa/plugin-lib/commit/7f4aea6f67836ef872dbcd6bd2061a072a5ad7f7))
+
+
+### ♻️ Chores
+
+* **auth:** remove duplication and fix config.ts/auth.ts inconsistencies ([4669054](https://github.com/hesedcasa/plugin-lib/commit/46690546fa5a83e25c82c567cfcb5e9ec2bbfd2d))
+* **auth:** remove duplication and fix config.ts/auth.ts inconsistencies ([7026e90](https://github.com/hesedcasa/plugin-lib/commit/7026e90c3e4d1d2282201c3efdee47b5e982febb))
+
 ## [0.4.0](https://github.com/hesedcasa/plugin-lib/compare/v0.3.0...v0.4.0) (2026-05-27)
 
 
