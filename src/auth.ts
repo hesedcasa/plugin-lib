@@ -7,11 +7,12 @@ import {createProfileManager, type Profiles} from './config.js'
 
 export interface FieldDef {
   char: string
-  default?: string
+  default?: boolean | number | string
   description: string
   masked?: boolean
   message: string
   name: string
+  type?: 'boolean' | 'number' | 'string'
 }
 
 export interface AuthCommandOptions {
@@ -23,18 +24,54 @@ export interface AuthCommandOptions {
   testConnection: (auth: any) => Promise<ApiResult>
 }
 
-function buildDynamicFlags(fields: FieldDef[]): Record<string, ReturnType<typeof Flags.string>> {
-  const result: Record<string, ReturnType<typeof Flags.string>> = {}
+function buildDynamicFlags(fields: FieldDef[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
   for (const f of fields) {
-    result[f.name] = Flags.string({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      char: f.char as any,
-      description: f.description,
-      ...(f.default ? {default: f.default} : {}),
-    }) as ReturnType<typeof Flags.string>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const char = f.char as any
+    if (f.type === 'number') {
+      result[f.name] = Flags.integer({
+        char,
+        description: f.description,
+        ...(f.default === undefined ? {} : {default: f.default as number}),
+      })
+    } else if (f.type === 'boolean') {
+      result[f.name] = Flags.boolean({
+        char,
+        description: f.description,
+        ...(f.default === undefined ? {} : {default: f.default as boolean}),
+      })
+    } else {
+      result[f.name] = Flags.string({
+        char,
+        description: f.description,
+        ...(f.default === undefined ? {} : {default: String(f.default)}),
+      })
+    }
   }
 
   return result
+}
+
+async function promptFieldValue(
+  f: FieldDef,
+  currentValue?: boolean | number | string,
+): Promise<boolean | number | string> {
+  if (f.type === 'boolean') {
+    return confirm({
+      default: currentValue === undefined ? (f.default as boolean | undefined) : Boolean(currentValue),
+      message: f.message,
+    })
+  }
+
+  const inputDefaults =
+    currentValue === undefined
+      ? f.default === undefined
+        ? {}
+        : {default: String(f.default)}
+      : {default: String(currentValue), prefill: 'tab' as const}
+  const raw = await input({...inputDefaults, message: f.message})
+  return f.type === 'number' ? Number(raw) : raw
 }
 
 export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
@@ -58,12 +95,10 @@ export function createAuthAddCommand(options: AuthCommandOptions): typeof Comman
           this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
         }
 
-        const auth: Record<string, string> = {}
+        const auth: Record<string, boolean | number | string> = {}
         for (const f of fields) {
-          auth[f.name] =
-            (flags[f.name] as string | undefined) ??
-            // eslint-disable-next-line no-await-in-loop
-            (await input({message: f.message}))
+          // eslint-disable-next-line no-await-in-loop
+          auth[f.name] = (flags[f.name] as boolean | number | string | undefined) ?? (await promptFieldValue(f))
         }
 
         await pm.saveProfiles({
@@ -380,14 +415,13 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
         const {flags} = await this.parse(this.constructor as typeof Command)
         const profileName = flags.profile ?? 'default'
         const pm = createProfileManager(this.config, profileName)
-        const existing = ((await pm.loadAuthConfig()) ?? {}) as Record<string, string>
+        const existing = ((await pm.loadAuthConfig()) ?? {}) as Record<string, boolean | number | string>
 
-        const auth: Record<string, string> = {}
+        const auth: Record<string, boolean | number | string> = {}
         for (const f of fields) {
           auth[f.name] =
-            (flags[f.name] as string | undefined) ??
             // eslint-disable-next-line no-await-in-loop
-            (await input({default: existing[f.name], message: f.message, prefill: 'tab'}))
+            (flags[f.name] as boolean | number | string | undefined) ?? (await promptFieldValue(f, existing[f.name]))
         }
 
         if (process.stdout.isTTY) {
@@ -404,6 +438,7 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
 
         action.start('Authenticating')
         const result = await testConnection(auth)
+
         clearClients()
 
         if (result.success) {
