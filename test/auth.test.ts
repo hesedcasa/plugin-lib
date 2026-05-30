@@ -26,7 +26,6 @@ describe('auth commands', () => {
   function makeOptions(overrides?: Partial<AuthCommandOptions>): AuthCommandOptions {
     return {
       clearClients: sandbox.stub(),
-      hasHostFlag: true,
       serviceName: 'TestService',
       testConnection: sandbox.stub().resolves({success: true}),
       ...overrides,
