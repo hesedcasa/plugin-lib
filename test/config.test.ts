@@ -83,11 +83,16 @@ describe('createProfileManager', () => {
   })
 
   describe('getDefaultProfile', () => {
-    it('returns "default" when no config file exists', async () => {
+    it('throws when no config file exists', async () => {
       sandbox.stub(fs, 'readJSON').rejects({code: 'ENOENT'})
 
       const {getDefaultProfile} = createProfileManager(makeConfig())
-      expect(await getDefaultProfile()).to.equal('default')
+      try {
+        await getDefaultProfile()
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('Missing authentication config')
+      }
     })
 
     it('returns the stored defaultProfile', async () => {
@@ -106,45 +111,52 @@ describe('createProfileManager', () => {
   })
 
   describe('setDefaultProfile', () => {
-    it('logs error when config file does not exist', async () => {
+    it('throws when config file does not exist', async () => {
       sandbox.stub(fs, 'readJSON').rejects({code: 'ENOENT'})
 
       const {setDefaultProfile} = createProfileManager(makeConfig())
-      const logs: string[] = []
-      await setDefaultProfile('work', (msg) => logs.push(msg))
-      expect(logs).to.include('Missing authentication config')
+      try {
+        await setDefaultProfile('work')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('Missing authentication config')
+      }
     })
 
-    it('logs error when profile is not found', async () => {
+    it('throws when profile is not found', async () => {
       sandbox.stub(fs, 'readJSON').resolves({profiles: {default: {apiToken: 't', host: 'h'}}})
 
       const {setDefaultProfile} = createProfileManager(makeConfig())
-      const logs: string[] = []
-      await setDefaultProfile('nonexistent', (msg) => logs.push(msg))
-      expect(logs).to.include("Profile 'nonexistent' not found")
+      try {
+        await setDefaultProfile('nonexistent')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include("Profile 'nonexistent' not found")
+      }
     })
 
-    it('logs error when profile is not found in legacy auth format', async () => {
+    it('throws when profile is not found in legacy auth format', async () => {
       sandbox.stub(fs, 'readJSON').resolves({auth: {apiToken: 't', host: 'h'}})
 
       const {setDefaultProfile} = createProfileManager(makeConfig())
-      const logs: string[] = []
-      await setDefaultProfile('work', (msg) => logs.push(msg))
-      expect(logs).to.include("Profile 'work' not found")
+      try {
+        await setDefaultProfile('work')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include("Profile 'work' not found")
+      }
     })
 
-    it('writes the new defaultProfile and logs confirmation', async () => {
+    it('writes the new defaultProfile', async () => {
       const raw = {profiles: {work: {apiToken: 't', host: 'h'}}}
       sandbox.stub(fs, 'readJSON').resolves(raw)
       const outputStub = sandbox.stub(fs, 'outputJSON').resolves()
 
       const {setDefaultProfile} = createProfileManager(makeConfig())
-      const logs: string[] = []
-      await setDefaultProfile('work', (msg) => logs.push(msg))
+      await setDefaultProfile('work')
 
       expect(outputStub.calledOnce).to.be.true
       expect(outputStub.firstCall.args[1]).to.have.property('defaultProfile', 'work')
-      expect(logs).to.include("Default profile set to 'work'")
     })
   })
 
@@ -154,7 +166,7 @@ describe('createProfileManager', () => {
       sandbox.stub(fs, 'readJSON').resolves({profiles})
 
       const {readProfiles} = createProfileManager(makeConfig())
-      expect(await readProfiles(() => {})).to.deep.equal(profiles)
+      expect(await readProfiles()).to.deep.equal(profiles)
     })
 
     it('converts old auth format to a default profile', async () => {
@@ -162,24 +174,26 @@ describe('createProfileManager', () => {
       sandbox.stub(fs, 'readJSON').resolves({auth})
 
       const {readProfiles} = createProfileManager(makeConfig())
-      expect(await readProfiles(() => {})).to.deep.equal({default: auth})
+      expect(await readProfiles()).to.deep.equal({default: auth})
     })
 
     it('returns empty object when file has neither profiles nor auth', async () => {
       sandbox.stub(fs, 'readJSON').resolves({})
 
       const {readProfiles} = createProfileManager(makeConfig())
-      expect(await readProfiles(() => {})).to.deep.equal({})
+      expect(await readProfiles()).to.deep.equal({})
     })
 
-    it('returns undefined and logs error when file is missing', async () => {
+    it('throws when file is missing', async () => {
       sandbox.stub(fs, 'readJSON').rejects({code: 'ENOENT'})
 
       const {readProfiles} = createProfileManager(makeConfig())
-      const logs: string[] = []
-      const result = await readProfiles((msg) => logs.push(msg))
-      expect(result).to.be.undefined
-      expect(logs).to.include('No authentication profiles found')
+      try {
+        await readProfiles()
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('No authentication profiles found')
+      }
     })
   })
 

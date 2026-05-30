@@ -1,332 +1,312 @@
-import {confirm, input, password} from '@inquirer/prompts'
+import {confirm, input} from '@inquirer/prompts'
 import {Command, Flags} from '@oclif/core'
 import {action} from '@oclif/core/ux'
 
 import {type ApiResult} from './api.js'
-import {createProfileManager, type Profiles} from './config.js'
+import {type AuthConfig, createProfileManager, type Profiles} from './config.js'
 
 export interface FieldDef {
-  char: string
-  default?: boolean | number | string
+  char?:
+    | 'a'
+    | 'b'
+    | 'c'
+    | 'd'
+    | 'e'
+    | 'f'
+    | 'g'
+    | 'h'
+    | 'i'
+    | 'j'
+    | 'k'
+    | 'l'
+    | 'm'
+    | 'n'
+    | 'o'
+    | 'p'
+    | 'q'
+    | 'r'
+    | 's'
+    | 't'
+    | 'u'
+    | 'v'
+    | 'w'
+    | 'x'
+    | 'y'
+    | 'z' // shorter flag version
+  default?: boolean | number | string // default value if flag not passed
   description: string
-  masked?: boolean
-  message: string
   name: string
-  type?: 'boolean' | 'number' | 'string'
+  required?: boolean // if false, empty string values are omitted from the auth payload
+  type: 'boolean' | 'number' | 'string'
 }
 
-export interface AuthCommandOptions {
+export interface AuthCommandOptions<T = AuthConfig> {
   clearClients: () => void
-  fields?: FieldDef[] // when provided, overrides legacy apiToken/email/host behavior
-  hasHostFlag: boolean
+  fields?: FieldDef[]
   serviceName: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  testConnection: (auth: any) => Promise<ApiResult>
+  testConnection: (auth: T) => Promise<ApiResult>
 }
 
-function buildDynamicFlags(fields: FieldDef[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const f of fields) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const char = f.char as any
-    if (f.type === 'number') {
-      result[f.name] = Flags.integer({
-        char,
-        description: f.description,
-        ...(f.default === undefined ? {} : {default: f.default as number}),
-      })
-    } else if (f.type === 'boolean') {
-      result[f.name] = Flags.boolean({
-        char,
-        description: f.description,
-        ...(f.default === undefined ? {} : {default: f.default as boolean}),
-      })
-    } else {
-      result[f.name] = Flags.string({
-        char,
-        description: f.description,
-        ...(f.default === undefined ? {} : {default: String(f.default)}),
+function buildDynamicFlags(fields: FieldDef[]) {
+  return Object.fromEntries(
+    fields.map(({char, description, name, type}) => {
+      const base = {char, description, required: !process.stdout.isTTY}
+      if (type === 'number') return [name, Flags.integer(base)]
+      if (type === 'boolean') return [name, Flags.boolean(base)]
+      return [name, Flags.string(base)]
+    }),
+  )
+}
+
+function getLegacyDefaultFields(serviceName: string): FieldDef[] {
+  return [
+    {char: 't', description: 'API Token', name: 'apiToken', required: true, type: 'string'},
+    {char: 'e', description: 'Account email', name: 'email', type: 'string'},
+    {char: 'u', description: `${serviceName} instance URL`, name: 'host', required: true, type: 'string'},
+  ]
+}
+
+async function promptFieldValue(
+  f: FieldDef,
+  errorFn: (msg: string) => never,
+  currentValue?: boolean | number | string,
+): Promise<boolean | never | number | string> {
+  const {default: def, description, type} = f
+
+  try {
+    if (type === 'boolean') {
+      return confirm({
+        default: currentValue === undefined ? (def as boolean) : Boolean(currentValue),
+        message: description + ':',
       })
     }
+
+    const raw = await input({
+      default: currentValue === undefined ? (def === undefined ? undefined : String(def)) : String(currentValue),
+      message: description + ':',
+      required: true,
+    })
+
+    return type === 'number' ? Number(raw) : raw
+  } catch {
+    errorFn('Operation canceled!')
+  }
+}
+
+async function collectAuthFields(
+  errorFn: (msg: string) => never,
+  fields: FieldDef[],
+  flags: Record<string, unknown>,
+  existing?: Record<string, boolean | number | string>,
+): Promise<Record<string, boolean | number | string>> {
+  const auth: Record<string, boolean | number | string> = {}
+
+  async function collect(index: number): Promise<void> {
+    if (index >= fields.length) return
+    const f = fields[index]
+    const value =
+      (flags[f.name] as boolean | number | string | undefined) ??
+      (await promptFieldValue(f, errorFn, existing?.[f.name]))
+
+    if (f.required !== false || value !== '') {
+      auth[f.name] = value
+    }
+
+    await collect(index + 1)
+  }
+
+  await collect(0)
+  return auth
+}
+
+function profileSuffix(name: string, prep: 'as' | 'for'): string {
+  return name === 'default' ? '' : ` ${prep} '${name}'`
+}
+
+async function testAndReport<T>(
+  auth: T,
+  testFn: (auth: T) => Promise<ApiResult>,
+  clearFn: () => void,
+  errorFn: (msg: string) => never,
+): Promise<ApiResult> {
+  action.start('Authenticating')
+  const result = await testFn(auth)
+  clearFn()
+  if (result.success) {
+    action.stop('✓ successful')
+  } else {
+    action.stop('✗ failed')
+    errorFn('Authentication is invalid. Please check your credentials.')
   }
 
   return result
 }
 
-async function promptFieldValue(
-  f: FieldDef,
-  currentValue?: boolean | number | string,
-): Promise<boolean | number | string> {
-  if (f.type === 'boolean') {
-    return confirm({
-      default: currentValue === undefined ? (f.default as boolean | undefined) : Boolean(currentValue),
-      message: f.message,
-    })
+abstract class AuthCommandBase extends Command {
+  override toErrorJson(err: Error & Record<string, unknown>) {
+    return {error: err.message}
   }
-
-  if (f.masked) {
-    // For masked fields use a password prompt. On update, empty input keeps the existing value.
-    const hint = currentValue === undefined ? '' : ' (press Enter to keep existing)'
-    const raw = await password({mask: '*', message: `${f.message}${hint}`})
-    const value = raw !== '' || currentValue === undefined ? raw : String(currentValue)
-    return f.type === 'number' ? Number(value) : value
-  }
-
-  const inputDefaults =
-    currentValue === undefined
-      ? f.default === undefined
-        ? {}
-        : {default: String(f.default)}
-      : {default: String(currentValue), prefill: 'tab' as const}
-  const raw = await input({...inputDefaults, message: f.message})
-  return f.type === 'number' ? Number(raw) : raw
 }
 
-export function createAuthAddCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
+export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
+  const {clearClients, fields, serviceName, testConnection} = options
+  const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
 
-  if (fields) {
-    return class extends Command {
-      static override description = `Add ${serviceName} auth profile`
-      static override flags = {
-        profile: Flags.string({char: 'p', default: 'default', description: 'Profile name'}),
-        ...buildDynamicFlags(fields!),
-      }
-
-      async run(): Promise<void> {
-        const {flags} = await this.parse(this.constructor as typeof Command)
-        const profileName = flags.profile ?? 'default'
-        const pm = createProfileManager(this.config, profileName)
-        const existingProfiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
-
-        if (profileName in existingProfiles) {
-          this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
-        }
-
-        const auth: Record<string, boolean | number | string> = {}
-        for (const f of fields) {
-          // eslint-disable-next-line no-await-in-loop
-          auth[f.name] = (flags[f.name] as boolean | number | string | undefined) ?? (await promptFieldValue(f))
-        }
-
-        await pm.saveProfiles({
-          ...existingProfiles,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          [profileName]: auth as any,
-        })
-
-        action.start('Authenticating')
-        const result = await testConnection(auth)
-        clearClients()
-
-        if (result.success) {
-          action.stop('✓ successful')
-          const profileSuffix = profileName === 'default' ? '' : ` as profile '${profileName}'`
-          this.log(`Profile "${profileName}" saved${profileSuffix}.`)
-        } else {
-          action.stop('✗ failed')
-          this.error('Authentication is invalid. Please check your credentials.')
-        }
-      }
-    }
-  }
-
-  // Legacy behavior (for Jira-style apiToken/email/host)
-  return class AuthAdd extends Command {
+  return class AuthAdd extends AuthCommandBase {
     static override args = {}
     static override description = `Add ${serviceName} authentication`
     static override enableJsonFlag = true
-    static override examples = [
-      '<%= config.bin %> <%= command.id %>',
-      '<%= config.bin %> <%= command.id %> --profile work',
-    ]
+    static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p prod']
     static override flags = {
-      email: Flags.string({char: 'e', description: 'Account email', required: false}),
-      profile: Flags.string({char: 'p', description: 'Profile name', required: false}),
-      token: Flags.string({char: 't', description: 'API Token', required: !process.stdout.isTTY}),
-      url: Flags.string({
-        char: 'u',
-        description: `${serviceName} instance URL (start with https://)`,
-        hidden: !hasHostFlag,
-        required: hasHostFlag && !process.stdout.isTTY,
-      }),
+      profile: Flags.string({char: 'p', description: 'Profile name', required: !process.stdout.isTTY}),
+      ...buildDynamicFlags(resolvedFields),
     }
 
     public async run(): Promise<ApiResult> {
-      const {flags} = await this.parse(AuthAdd)
-      const profileName =
-        flags.profile ?? (process.stdout.isTTY ? await input({message: 'Profile name:', required: true}) : 'default')
-      const apiToken = flags.token ?? (await input({message: 'API Token:', required: true}))
-      const email = flags.email ?? (await input({message: 'Account email:', required: false}))
-      const host = hasHostFlag
-        ? (flags.url ?? (await input({message: `${serviceName} instance URL (start with https://):`, required: true})))
-        : undefined
+      const {flags} = await this.parse(this.constructor as typeof Command)
 
-      const pm = createProfileManager(this.config, profileName)
-      const profiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
+      const profileName = flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
+      const pm = createProfileManager<T>(this.config, profileName)
 
-      if (profileName in profiles) {
+      let existingProfiles: Profiles<T>
+      try {
+        existingProfiles = await pm.readProfiles()
+      } catch {
+        existingProfiles = {} as Profiles<T>
+      }
+
+      if (profileName in existingProfiles) {
         this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
       }
 
+      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, flags)
+
       await pm.saveProfiles({
-        ...profiles,
-        [profileName]: {apiToken, ...(email && {email}), ...(host && {host})},
+        ...existingProfiles,
+        [profileName]: auth as unknown as T,
       })
 
-      action.start('Authenticating')
-      const result = await testConnection({apiToken, ...(email && {email}), ...(host && {host})})
-      clearClients()
-
-      if (result.success) {
-        action.stop('✓ successful')
-        const profileSuffix = profileName === 'default' ? '' : ` as profile '${profileName}'`
-        this.log(`Authentication added${profileSuffix} successfully`)
-      } else {
-        action.stop('✗ failed')
-        this.error('Authentication is invalid. Please check your credentials.')
-      }
-
+      const result = await testAndReport(auth as T, testConnection, clearClients, (msg) => this.error(msg))
+      this.log(`Authentication added${profileSuffix(profileName, 'as')} successfully`)
       return result
     }
   }
 }
 
-export function createAuthListCommand(options: Pick<AuthCommandOptions, 'fields' | 'hasHostFlag'>): typeof Command {
-  const {fields, hasHostFlag} = options
-
+export function createAuthListCommand(): typeof Command {
   interface ProfileInfo {
     [key: string]: unknown
-    apiToken: string
     default?: boolean
-    email?: string
-    host?: string
     name: string
   }
 
-  interface ListResult {
-    profiles: ProfileInfo[]
-  }
-
-  return class AuthList extends Command {
+  return class AuthList extends AuthCommandBase {
     static override args = {}
     static override description = 'List authentication profiles'
     static override enableJsonFlag = true
     static override examples = ['<%= config.bin %> <%= command.id %>']
     static override flags = {}
 
-    public async run(): Promise<ListResult> {
+    public async run(): Promise<ApiResult> {
       await this.parse(AuthList)
       const {getDefaultProfile, readProfiles} = createProfileManager(this.config)
-      const profiles: Profiles | undefined = await readProfiles(this.log.bind(this))
+      let profiles: Profiles | undefined
+      let defaultProfile = 'default'
+      try {
+        const resolved = await Promise.all([readProfiles(), getDefaultProfile()])
+        profiles = resolved[0]
+        defaultProfile = resolved[1]
+      } catch (error) {
+        this.error(error instanceof Error ? error.message : String(error))
+      }
 
       if (!profiles || Object.keys(profiles).length === 0) {
-        this.log('No authentication profiles found. Run auth:add to add one.')
-        return {profiles: []}
+        this.error('No authentication profiles found.')
       }
 
-      const defaultProfile = await getDefaultProfile()
-
-      if (fields) {
-        // Dynamic fields display
-        const profileList: ProfileInfo[] = Object.entries(profiles).map(([name, auth]) => {
-          const entry: ProfileInfo = {
-            ...(name === defaultProfile && {default: true}),
-            apiToken: '',
-            name,
-          }
-          for (const f of fields) {
-            const val = (auth as unknown as Record<string, string>)[f.name]
-            if (val !== undefined) {
-              entry[f.name] = f.masked ? `${String(val).slice(0, 3)}...${String(val).slice(-4)}` : val
-            }
-          }
-
-          return entry
-        })
-
-        for (const profile of profileList) {
-          const details = fields
-            .map((f) => (profile[f.name] === undefined ? '' : `  ${f.name}: ${profile[f.name]}`))
-            .filter(Boolean)
-            .join('\n')
-          this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
-        }
-
-        return {profiles: profileList}
-      }
-
-      // Legacy display
       const profileList: ProfileInfo[] = Object.entries(profiles).map(([name, auth]) => ({
-        ...(auth.email && {email: auth.email}),
-        ...(hasHostFlag && auth.host && {host: auth.host}),
         ...(name === defaultProfile && {default: true}),
-        apiToken: `${auth.apiToken.slice(0, 3)}...${auth.apiToken.slice(-4)}`,
         name,
+        ...Object.fromEntries(
+          Object.entries(auth as unknown as Record<string, unknown>).filter(([, v]) => v !== undefined),
+        ),
       }))
 
       for (const profile of profileList) {
-        const details = [
-          ...(hasHostFlag && profile.host ? [`  host: ${profile.host}`] : []),
-          `  token: ${profile.apiToken}`,
-          profile.email ? `  email: ${profile.email}` : '',
-        ]
-          .filter(Boolean)
+        const details = Object.entries(profile)
+          .filter(([key]) => key !== 'name' && key !== 'default')
+          .map(([key, val]) => `  ${key}: ${val}`)
           .join('\n')
         this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
       }
 
-      return {profiles: profileList}
+      return {
+        data: profileList,
+        success: true,
+      }
     }
   }
 }
 
 export function createAuthProfileCommand(): typeof Command {
-  return class AuthProfile extends Command {
+  return class AuthProfile extends AuthCommandBase {
     static override args = {}
     static override description = 'Set or show the default authentication profile'
     static override enableJsonFlag = true
     static override examples = [
       '<%= config.bin %> <%= command.id %>',
-      '<%= config.bin %> <%= command.id %> --default work',
+      '<%= config.bin %> <%= command.id %> --default test',
     ]
     static override flags = {
-      default: Flags.string({description: 'Profile name to set as default', required: false}),
+      default: Flags.string({description: 'Profile to set as default', required: false}),
     }
 
-    public async run(): Promise<void> {
+    public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthProfile)
       const {getDefaultProfile, setDefaultProfile} = createProfileManager(this.config)
+      let profile = ''
 
       if (flags.default) {
-        await setDefaultProfile(flags.default, this.log.bind(this))
-        return
+        try {
+          await setDefaultProfile(flags.default)
+          this.log(`Default profile set to '${flags.default}'`)
+        } catch (error) {
+          this.error(error instanceof Error ? error.message : String(error))
+        }
+
+        return {success: true}
       }
 
-      const current = await getDefaultProfile()
-      this.log(current)
+      try {
+        profile = await getDefaultProfile()
+        this.log(profile)
+      } catch (error) {
+        this.error(error instanceof Error ? error.message : String(error))
+      }
+
+      return {
+        data: profile,
+        success: true,
+      }
     }
   }
 }
 
-export function createAuthTestCommand(options: AuthCommandOptions): typeof Command {
+export function createAuthTestCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
   const {clearClients, serviceName, testConnection} = options
 
-  return class AuthTest extends Command {
+  return class AuthTest extends AuthCommandBase {
     static override args = {}
     static override description = 'Test authentication and connection'
     static override enableJsonFlag = true
-    static override examples = [
-      '<%= config.bin %> <%= command.id %>',
-      '<%= config.bin %> <%= command.id %> --profile work',
-    ]
+    static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p prod']
     static override flags = {
       profile: Flags.string({char: 'p', description: 'Authentication profile name', required: false}),
     }
 
     public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthTest)
-      const authConfig = await createProfileManager(this.config, flags.profile).loadAuthConfig()
+      const authConfig = await createProfileManager<T>(this.config, flags.profile).loadAuthConfig()
       if (!authConfig) {
         this.error(`Missing authentication config. Run '${this.config.bin} auth add'.`)
       }
@@ -349,31 +329,31 @@ export function createAuthTestCommand(options: AuthCommandOptions): typeof Comma
 }
 
 export function createAuthDeleteCommand(): typeof Command {
-  return class AuthDelete extends Command {
+  return class AuthDelete extends AuthCommandBase {
     static override args = {}
     static override description = 'Delete an authentication profile'
     static override enableJsonFlag = true
-    static override examples = [
-      '<%= config.bin %> <%= command.id %>',
-      '<%= config.bin %> <%= command.id %> --profile work',
-    ]
+    static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p prod']
     static override flags = {
-      profile: Flags.string({char: 'p', description: 'Profile name to delete', required: false}),
+      profile: Flags.string({char: 'p', description: 'Profile to delete', required: false}),
     }
 
-    public async run(): Promise<void> {
+    public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthDelete)
       const {clearDefaultProfile, getDefaultProfile, readProfiles, saveProfiles, setDefaultProfile} =
         createProfileManager(this.config)
 
-      const profiles = await readProfiles(this.log.bind(this))
-      if (!profiles || Object.keys(profiles).length === 0) {
+      const profiles = await readProfiles().catch((error: unknown) => {
+        this.error(error instanceof Error ? error.message : String(error))
+      })
+
+      if (Object.keys(profiles).length === 0) {
         this.error('No authentication profiles found.')
       }
 
       const profileName =
         flags.profile ??
-        (process.stdout.isTTY ? await input({message: 'Profile name to delete:', required: true}) : 'default')
+        (process.stdout.isTTY ? await input({message: 'Profile to delete:', required: true}) : 'default')
 
       if (!(profileName in profiles)) {
         this.error(`Profile '${profileName}' does not exist.`)
@@ -381,10 +361,10 @@ export function createAuthDeleteCommand(): typeof Command {
 
       if (process.stdout.isTTY) {
         const answer = await confirm({message: `Delete profile '${profileName}'?`})
-        if (!answer) return
+        if (!answer) return {success: false}
       }
 
-      const defaultProfile = await getDefaultProfile()
+      const defaultProfile = await getDefaultProfile().catch(() => 'default')
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const {[profileName]: _, ...remaining} = profiles
 
@@ -393,127 +373,46 @@ export function createAuthDeleteCommand(): typeof Command {
       // If deleted profile was the default, clear or update default
       if (profileName === defaultProfile) {
         const remainingKeys = Object.keys(remaining)
-        await (remainingKeys.length > 0
-          ? setDefaultProfile(remainingKeys[0], this.log.bind(this))
-          : clearDefaultProfile())
+        await (remainingKeys.length > 0 ? setDefaultProfile(remainingKeys[0]) : clearDefaultProfile())
       }
 
       this.log(`Profile '${profileName}' deleted.`)
+
+      return {success: true}
     }
   }
 }
 
-export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Command {
-  const {clearClients, fields, hasHostFlag, serviceName, testConnection} = options
+export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
+  const {clearClients, fields, serviceName, testConnection} = options
+  const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
 
-  if (fields) {
-    return class extends Command {
-      static override description = `Update ${serviceName} auth profile`
-      static override flags = {
-        profile: Flags.string({
-          char: 'p',
-          default: 'default',
-          description: 'Profile name to update (default: "default")',
-        }),
-        ...buildDynamicFlags(fields!),
-      }
-
-      async run(): Promise<ApiResult | void> {
-        const {flags} = await this.parse(this.constructor as typeof Command)
-        const profileName = flags.profile ?? 'default'
-        const pm = createProfileManager(this.config, profileName)
-        const existing = ((await pm.loadAuthConfig()) ?? {}) as Record<string, boolean | number | string>
-
-        const auth: Record<string, boolean | number | string> = {}
-        for (const f of fields) {
-          auth[f.name] =
-            // eslint-disable-next-line no-await-in-loop
-            (flags[f.name] as boolean | number | string | undefined) ?? (await promptFieldValue(f, existing[f.name]))
-        }
-
-        if (process.stdout.isTTY) {
-          const answer = await confirm({message: 'Override existing config?'})
-          if (!answer) return
-        }
-
-        const allProfiles = (await pm.readProfiles(this.log.bind(this))) ?? {}
-        await pm.saveProfiles({
-          ...allProfiles,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          [profileName]: auth as any,
-        })
-
-        action.start('Authenticating')
-        const result = await testConnection(auth)
-
-        clearClients()
-
-        if (result.success) {
-          action.stop('✓ successful')
-          const profileSuffix = profileName === 'default' ? '' : ` for profile '${profileName}'`
-          this.log(`Authentication${profileSuffix} updated successfully`)
-        } else {
-          action.stop('✗ failed')
-          this.error('Authentication is invalid. Please check your credentials.')
-        }
-
-        return result
-      }
-    }
-  }
-
-  // Legacy behavior (unchanged, for Jira)
-  return class AuthUpdate extends Command {
+  return class AuthUpdate extends AuthCommandBase {
     static override args = {}
-    static override description = 'Update existing authentication profile'
+    static override description = `Update ${serviceName} authentication`
     static override enableJsonFlag = true
-    static override examples = [
-      '<%= config.bin %> <%= command.id %>',
-      '<%= config.bin %> <%= command.id %> --profile work',
-    ]
+    static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p test']
     static override flags = {
-      email: Flags.string({char: 'e', description: 'Account email', required: false}),
-      profile: Flags.string({char: 'p', description: 'Profile name to update (default: "default")', required: false}),
-      token: Flags.string({char: 't', description: 'API Token', required: !process.stdout.isTTY}),
-      url: Flags.string({
-        char: 'u',
-        description: `${serviceName} instance URL (start with https://)`,
-        hidden: !hasHostFlag,
-        required: hasHostFlag && !process.stdout.isTTY,
-      }),
+      profile: Flags.string({char: 'p', description: 'Profile name', required: !process.stdout.isTTY}),
+      ...buildDynamicFlags(resolvedFields),
     }
 
     public async run(): Promise<ApiResult | void> {
-      const {flags} = await this.parse(AuthUpdate)
-      const profileName = flags.profile ?? 'default'
-      const pm = createProfileManager(this.config, profileName)
-      const profiles = await pm.readProfiles(this.log.bind(this))
+      const {flags} = await this.parse(this.constructor as typeof Command)
 
-      if (!profiles) {
-        this.log('Run auth:add instead')
-        return
-      }
+      const profileName = flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
+      const pm = createProfileManager<T>(this.config, profileName)
+      const allProfiles = await pm.readProfiles().catch(() => null)
 
-      if (!profiles[profileName]) {
+      if (!allProfiles) return
+
+      if (!allProfiles[profileName]) {
         this.error(`Profile '${profileName}' does not exist. Use '${this.config.bin} auth add' to create it.`)
       }
 
-      const current = profiles[profileName] as unknown as Record<string, string>
+      const existing = allProfiles[profileName] as unknown as Record<string, boolean | number | string>
 
-      const apiToken =
-        flags.token ?? (await input({default: current.apiToken, message: 'API Token:', prefill: 'tab', required: true}))
-      const email =
-        flags.email ??
-        (await input({default: current.email, message: 'Account email:', prefill: 'tab', required: false}))
-      const host = hasHostFlag
-        ? (flags.url ??
-          (await input({
-            default: current.host,
-            message: `${serviceName} instance URL (start with https://):`,
-            prefill: 'tab',
-            required: true,
-          })))
-        : undefined
+      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, flags, existing)
 
       if (process.stdout.isTTY) {
         const answer = await confirm({message: 'Override existing config?'})
@@ -521,23 +420,12 @@ export function createAuthUpdateCommand(options: AuthCommandOptions): typeof Com
       }
 
       await pm.saveProfiles({
-        ...profiles,
-        [profileName]: {apiToken, ...(email && {email}), ...(host && {host})},
+        ...allProfiles,
+        [profileName]: auth as unknown as T,
       })
 
-      action.start('Authenticating')
-      const result = await testConnection({apiToken, ...(email && {email}), ...(host && {host})})
-      clearClients()
-
-      if (result.success) {
-        action.stop('✓ successful')
-        const profileSuffix = profileName === 'default' ? '' : ` for profile '${profileName}'`
-        this.log(`Authentication${profileSuffix} updated successfully`)
-      } else {
-        action.stop('✗ failed')
-        this.error('Authentication is invalid. Please check your credentials.')
-      }
-
+      const result = await testAndReport(auth as unknown as T, testConnection, clearClients, (msg) => this.error(msg))
+      this.log(`Authentication${profileSuffix(profileName, 'for')} updated successfully`)
       return result
     }
   }

@@ -4,7 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import {createSandbox} from 'sinon'
 
-import {type AuthCommandOptions, createAuthDeleteCommand, createAuthTestCommand} from '../src/auth.js'
+import {
+  type AuthCommandOptions,
+  createAuthAddCommand,
+  createAuthDeleteCommand,
+  createAuthTestCommand,
+  createAuthUpdateCommand,
+  type FieldDef,
+} from '../src/auth.js'
 
 // Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
 // This helper isolates the one necessary cast so call sites stay readable.
@@ -26,7 +33,6 @@ describe('auth commands', () => {
   function makeOptions(overrides?: Partial<AuthCommandOptions>): AuthCommandOptions {
     return {
       clearClients: sandbox.stub(),
-      hasHostFlag: true,
       serviceName: 'TestService',
       testConnection: sandbox.stub().resolves({success: true}),
       ...overrides,
@@ -131,6 +137,18 @@ describe('auth commands', () => {
         // the command converts any undefined config into this error.
         expect((error as Error).message).to.include('Missing authentication config')
       }
+    })
+  })
+
+  describe('auth field command factories', () => {
+    it('do not mutate shared fields when creating add and update commands', () => {
+      const fields: FieldDef[] = [{description: 'API Token', name: 'apiToken', required: true, type: 'string'}]
+      const options = makeOptions({fields})
+
+      createAuthAddCommand(options)
+      createAuthUpdateCommand(options)
+
+      expect(fields).to.deep.equal([{description: 'API Token', name: 'apiToken', required: true, type: 'string'}])
     })
   })
 
