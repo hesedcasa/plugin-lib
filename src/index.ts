@@ -11,3 +11,4 @@ export {
 } from './auth.js'
 export {type AuthConfig, createProfileManager, type Profiles} from './config.js'
 export {formatAsToon} from './format.js'
+export {resolveSecrets, resolveSecretValue} from './secrets.js'
