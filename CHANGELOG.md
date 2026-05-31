@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/hesedcasa/plugin-lib/compare/v0.5.0...v0.6.0) (2026-05-31)
+
+
+### 🎉 Features
+
+* **auth:** extract command files, add pgauth support, and add CLAUDE.md ([6695d87](https://github.com/hesedcasa/plugin-lib/commit/6695d8780a7c58289d92ca1582c37900422e7864))
+* **auth:** extract command files, add pgauth support, and add CLAUDE.md ([3a3c5e1](https://github.com/hesedcasa/plugin-lib/commit/3a3c5e1f5c81474b6d9b3ebb0adeb9002e654f41))
+
 ## [0.5.0](https://github.com/hesedcasa/plugin-lib/compare/v0.4.0...v0.5.0) (2026-05-29)
 
 
