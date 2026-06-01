@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/hesedcasa/plugin-lib/compare/v0.6.0...v0.7.0) (2026-06-01)
+
+
+### 🎉 Features
+
+* **config:** add secret storage resolution for env: and file: references ([bf9fef3](https://github.com/hesedcasa/plugin-lib/commit/bf9fef310a91e774df562d3a5554377b8ad5cadb))
+* **config:** add secret storage resolution for env: and file: references ([7e43a75](https://github.com/hesedcasa/plugin-lib/commit/7e43a75a3327330b6a0faa7f31ccb3ba59efa56c))
+
 ## [0.6.0](https://github.com/hesedcasa/plugin-lib/compare/v0.5.0...v0.6.0) (2026-05-31)
 
 
