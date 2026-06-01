@@ -2,6 +2,8 @@ import {Config} from '@oclif/core'
 import {default as fs} from 'fs-extra'
 import {default as path} from 'node:path'
 
+import {resolveSecrets} from './secrets.js'
+
 export interface AuthConfig {
   apiToken: string
   email?: string
@@ -24,13 +26,16 @@ export function createProfileManager<T = AuthConfig>(config: Config, profile?: s
   async function loadAuthConfig(): Promise<T | undefined> {
     try {
       const raw = await fs.readJSON(cp)
+      let data: T | undefined
       if (raw.profiles) {
         const resolvedProfile = profile ?? raw.defaultProfile ?? 'default'
-        return raw.profiles[resolvedProfile] as T | undefined
+        data = raw.profiles[resolvedProfile] as T | undefined
+      } else {
+        if (profile && profile !== 'default') return undefined
+        data = raw.auth as T | undefined
       }
 
-      if (profile && profile !== 'default') return undefined
-      return raw.auth as T | undefined
+      return data === undefined ? undefined : resolveSecrets(data)
     } catch {
       return undefined
     }
