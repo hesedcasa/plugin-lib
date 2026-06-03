@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/hesedcasa/plugin-lib/compare/v0.7.0...v0.8.0) (2026-06-03)
+
+
+### 🎉 Features
+
+* **config:** add optional configFile param to createProfileManager ([dc1f10a](https://github.com/hesedcasa/plugin-lib/commit/dc1f10a89d53016a623ba676dd8df9102e663dc8))
+
 ## [0.7.0](https://github.com/hesedcasa/plugin-lib/compare/v0.6.0...v0.7.0) (2026-06-01)
 
 
