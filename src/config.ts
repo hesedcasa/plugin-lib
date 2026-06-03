@@ -20,8 +20,8 @@ function toMessage(error: unknown, missingMsg: string): string {
       : String(error)
 }
 
-export function createProfileManager<T = AuthConfig>(config: Config, profile?: string) {
-  const cp = path.join(config.configDir, `${config.bin}-config.json`)
+export function createProfileManager<T = AuthConfig>(config: Config, profile?: string, configFile?: string) {
+  const cp = configFile ? path.join(config.configDir, configFile) : path.join(config.configDir, `${config.bin}-config.json`)
 
   async function loadAuthConfig(): Promise<T | undefined> {
     try {
