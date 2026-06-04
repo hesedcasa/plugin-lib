@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/hesedcasa/plugin-lib/compare/v0.8.0...v0.9.0) (2026-06-04)
+
+
+### 🎉 Features
+
+* **auth:** thread configFile option through all auth command factories ([a634756](https://github.com/hesedcasa/plugin-lib/commit/a634756e2a4e4ddd99e2c61c469c0d8cc9c02f17))
+
 ## [0.8.0](https://github.com/hesedcasa/plugin-lib/compare/v0.7.0...v0.8.0) (2026-06-03)
 
 
