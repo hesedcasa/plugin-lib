@@ -42,6 +42,7 @@ export interface FieldDef {
 
 export interface AuthCommandOptions<T = AuthConfig> {
   clearClients: () => void
+  configFile?: string
   fields?: FieldDef[]
   serviceName: string
   testConnection: (auth: T) => Promise<ApiResult>
@@ -149,7 +150,7 @@ abstract class AuthCommandBase extends Command {
 }
 
 export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
-  const {clearClients, fields, serviceName, testConnection} = options
+  const {clearClients, configFile, fields, serviceName, testConnection} = options
   const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
 
   return class AuthAdd extends AuthCommandBase {
@@ -166,7 +167,7 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
       const {flags} = await this.parse(this.constructor as typeof Command)
 
       const profileName = flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
-      const pm = createProfileManager<T>(this.config, profileName)
+      const pm = createProfileManager<T>(this.config, profileName, configFile)
 
       let existingProfiles: Profiles<T>
       try {
@@ -193,7 +194,9 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
   }
 }
 
-export function createAuthListCommand(): typeof Command {
+export function createAuthListCommand(options?: {configFile?: string}): typeof Command {
+  const {configFile} = options ?? {}
+
   interface ProfileInfo {
     [key: string]: unknown
     default?: boolean
@@ -209,7 +212,7 @@ export function createAuthListCommand(): typeof Command {
 
     public async run(): Promise<ApiResult> {
       await this.parse(AuthList)
-      const {getDefaultProfile, readProfiles} = createProfileManager(this.config)
+      const {getDefaultProfile, readProfiles} = createProfileManager(this.config, undefined, configFile)
       let profiles: Profiles | undefined
       let defaultProfile = 'default'
       try {
@@ -248,7 +251,9 @@ export function createAuthListCommand(): typeof Command {
   }
 }
 
-export function createAuthProfileCommand(): typeof Command {
+export function createAuthProfileCommand(options?: {configFile?: string}): typeof Command {
+  const {configFile} = options ?? {}
+
   return class AuthProfile extends AuthCommandBase {
     static override args = {}
     static override description = 'Set or show the default authentication profile'
@@ -263,7 +268,7 @@ export function createAuthProfileCommand(): typeof Command {
 
     public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthProfile)
-      const {getDefaultProfile, setDefaultProfile} = createProfileManager(this.config)
+      const {getDefaultProfile, setDefaultProfile} = createProfileManager(this.config, undefined, configFile)
       let profile = ''
 
       if (flags.default) {
@@ -293,7 +298,7 @@ export function createAuthProfileCommand(): typeof Command {
 }
 
 export function createAuthTestCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
-  const {clearClients, serviceName, testConnection} = options
+  const {clearClients, configFile, serviceName, testConnection} = options
 
   return class AuthTest extends AuthCommandBase {
     static override args = {}
@@ -306,7 +311,7 @@ export function createAuthTestCommand<T = AuthConfig>(options: AuthCommandOption
 
     public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthTest)
-      const authConfig = await createProfileManager<T>(this.config, flags.profile).loadAuthConfig()
+      const authConfig = await createProfileManager<T>(this.config, flags.profile, configFile).loadAuthConfig()
       if (!authConfig) {
         this.error(`Missing authentication config. Run '${this.config.bin} auth add'.`)
       }
@@ -328,7 +333,9 @@ export function createAuthTestCommand<T = AuthConfig>(options: AuthCommandOption
   }
 }
 
-export function createAuthDeleteCommand(): typeof Command {
+export function createAuthDeleteCommand(options?: {configFile?: string}): typeof Command {
+  const {configFile} = options ?? {}
+
   return class AuthDelete extends AuthCommandBase {
     static override args = {}
     static override description = 'Delete an authentication profile'
@@ -341,7 +348,7 @@ export function createAuthDeleteCommand(): typeof Command {
     public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthDelete)
       const {clearDefaultProfile, getDefaultProfile, readProfiles, saveProfiles, setDefaultProfile} =
-        createProfileManager(this.config)
+        createProfileManager(this.config, undefined, configFile)
 
       const profiles = await readProfiles().catch((error: unknown) => {
         this.error(error instanceof Error ? error.message : String(error))
@@ -384,7 +391,7 @@ export function createAuthDeleteCommand(): typeof Command {
 }
 
 export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
-  const {clearClients, fields, serviceName, testConnection} = options
+  const {clearClients, configFile, fields, serviceName, testConnection} = options
   const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
 
   return class AuthUpdate extends AuthCommandBase {
@@ -401,7 +408,7 @@ export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOpti
       const {flags} = await this.parse(this.constructor as typeof Command)
 
       const profileName = flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
-      const pm = createProfileManager<T>(this.config, profileName)
+      const pm = createProfileManager<T>(this.config, profileName, configFile)
       const allProfiles = await pm.readProfiles().catch(() => null)
 
       if (!allProfiles) return
