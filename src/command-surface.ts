@@ -115,9 +115,10 @@ const STOPWORDS = new Set([
  * Command ids, summaries, and descriptions are tokenized; stopwords and tokens
  * shorter than two characters are dropped.
  *
- * `isAllowed` filters which commands contribute keywords (e.g. a permission
- * check); it defaults to allowing every command, keeping this module free of
- * any permission dependency.
+ * `isAllowed` receives the canonical oclif command id (e.g. `auth:login`) and
+ * filters which commands contribute keywords (e.g. a permission check); it
+ * defaults to allowing every command, keeping this module free of any
+ * permission dependency.
  */
 export function buildKeywords(
   config: Config,
@@ -132,7 +133,7 @@ export function buildKeywords(
   }
 
   for (const c of listCommands(config)) {
-    if (!isAllowed(c.id.replaceAll(':', ' '))) continue
+    if (!isAllowed(c.id)) continue
     for (const part of c.id.split(':')) addWord(part)
     const text = `${c.summary ?? ''} ${c.description ?? ''}`
     for (const raw of text.split(/[^a-zA-Z0-9-]+/)) addWord(raw)
