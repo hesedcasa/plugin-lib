@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/hesedcasa/plugin-lib/compare/v0.9.0...v0.10.0) (2026-06-23)
+
+
+### 🎉 Features
+
+* add command-surface utilities and HostConfigCommand ([9fb3fab](https://github.com/hesedcasa/plugin-lib/commit/9fb3fabbd38decc230dff882ccb7574445eb6017))
+* add command-surface utilities and HostConfigCommand ([b21e415](https://github.com/hesedcasa/plugin-lib/commit/b21e41595555b6a7bb199f64c3e92b7ca11a53f4))
+
 ## [0.9.0](https://github.com/hesedcasa/plugin-lib/compare/v0.8.0...v0.9.0) (2026-06-04)
 
 
