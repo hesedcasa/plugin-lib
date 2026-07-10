@@ -11,7 +11,7 @@ export interface PgAuthConfig {
 
 export const pgFields: FieldDef[] = [
   {char: 'h', description: 'Database host', name: 'host', required: true, type: 'string'},
-  {char: 'd', description: 'Database name', name: 'database', required: true, type: 'string'},
+  {char: 'd', description: 'Database name', name: 'database', required: false, type: 'string'},
   {char: 'u', description: 'Database user', name: 'user', required: true, type: 'string'},
   {char: 'w', description: 'Database password', name: 'password', required: true, type: 'string'},
   {default: 5432, description: 'Database port', name: 'port', required: true, type: 'number'},

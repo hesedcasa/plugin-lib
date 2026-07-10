@@ -85,7 +85,7 @@ async function promptFieldValue(
     const raw = await input({
       default: currentValue === undefined ? (def === undefined ? undefined : String(def)) : String(currentValue),
       message: description + ':',
-      required: true,
+      required: f.required !== false,
     })
 
     return type === 'number' ? Number(raw) : raw
