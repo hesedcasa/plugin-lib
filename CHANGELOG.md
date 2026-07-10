@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/hesedcasa/plugin-lib/compare/v0.10.0...v0.10.1) (2026-07-10)
+
+
+### 🛠️ Fixes
+
+* respect field.required in interactive prompts ([712dcd5](https://github.com/hesedcasa/plugin-lib/commit/712dcd5063bf84f178b6c83aec51d23b708ff488))
+* respect field.required in interactive prompts ([c0b05fc](https://github.com/hesedcasa/plugin-lib/commit/c0b05fc358b2b37966d2118b8ac4ff6d7fa5df88))
+
 ## [0.10.0](https://github.com/hesedcasa/plugin-lib/compare/v0.9.0...v0.10.0) (2026-06-23)
 
 
