@@ -97,6 +97,20 @@ describe('secrets', () => {
       expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('kv1-with-data')
     })
 
+    it('reads a payload with a metadata sibling and object-valued data as KV v2', async () => {
+      // This is the canonical KV v2 envelope: `{ data: {...}, metadata: {...} }`.
+      // Real Vault always returns this shape for v2, so the nested object is the
+      // secret. (A KV v1 secret cannot reach this branch without literally
+      // storing both `metadata` and an object `data` field — a payload that is
+      // byte-identical to a v2 envelope and thus undecidable from the body alone.)
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {apiToken: 'nested-v2'}, metadata: {version: 3}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/data/app#apiToken')).to.equal('nested-v2')
+    })
+
     it('honors VAULT_ADDR and strips trailing slashes', async () => {
       process.env.VAULT_ADDR = 'https://vault.example.com/'
       const get = sandbox.stub(vaultHttp, 'get').resolves({
