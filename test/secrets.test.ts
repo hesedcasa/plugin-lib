@@ -1,5 +1,8 @@
+import type {AddressInfo} from 'node:net'
+
 import {expect} from 'chai'
 import {default as fs} from 'fs-extra'
+import {createServer} from 'node:http'
 import {createSandbox} from 'sinon'
 
 import {resolveSecrets, resolveSecretValue, resolveVaultSecret, vaultHttp} from '../src/secrets.js'
@@ -12,6 +15,7 @@ describe('secrets', () => {
     delete process.env.TEST_SECRET_VAR
     delete process.env.VAULT_ADDR
     delete process.env.VAULT_TOKEN
+    delete process.env.VAULT_REQUEST_TIMEOUT
   })
 
   describe('resolveSecretValue', () => {
@@ -65,7 +69,7 @@ describe('secrets', () => {
 
     it('resolves a key from a KV v2 secret', async () => {
       const get = sandbox.stub(vaultHttp, 'get').resolves({
-        body: JSON.stringify({data: {data: {apiToken: 'kv2-secret'}}}),
+        body: JSON.stringify({data: {data: {apiToken: 'kv2-secret'}, metadata: {version: 1}}}),
         statusCode: 200,
         statusMessage: 'OK',
       })
@@ -82,10 +86,21 @@ describe('secrets', () => {
       expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('kv1-secret')
     })
 
+    it('resolves a KV v1 secret that itself contains a field named data', async () => {
+      // No metadata sibling → treated as KV v1, so the literal `data` field must
+      // not be mistaken for a KV v2 payload.
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'kv1-with-data', data: {nested: 'ignore-me'}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('kv1-with-data')
+    })
+
     it('honors VAULT_ADDR and strips trailing slashes', async () => {
       process.env.VAULT_ADDR = 'https://vault.example.com/'
       const get = sandbox.stub(vaultHttp, 'get').resolves({
-        body: JSON.stringify({data: {data: {token: 'x'}}}),
+        body: JSON.stringify({data: {data: {token: 'x'}, metadata: {version: 1}}}),
         statusCode: 200,
         statusMessage: 'OK',
       })
@@ -132,9 +147,30 @@ describe('secrets', () => {
       }
     })
 
+    it('rejects instead of hanging when the response stalls (real request)', async () => {
+      // Server sends headers then never ends the body; get() must time out.
+      const server = createServer((_req, res) => {
+        res.writeHead(200, {'Content-Type': 'application/json'})
+        res.write('{"data":')
+      })
+      await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      const {port} = server.address() as AddressInfo
+      process.env.VAULT_REQUEST_TIMEOUT = '75'
+      try {
+        await vaultHttp.get(`http://127.0.0.1:${port}/v1/secret/data/app`, 'test-token')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('timed out')
+      } finally {
+        server.close()
+      }
+    })
+
     it('throws when the key is not present in the secret', async () => {
       sandbox.stub(vaultHttp, 'get').resolves({
-        body: JSON.stringify({data: {data: {other: 'value'}}}),
+        body: JSON.stringify({data: {data: {other: 'value'}, metadata: {version: 1}}}),
         statusCode: 200,
         statusMessage: 'OK',
       })
@@ -148,7 +184,7 @@ describe('secrets', () => {
 
     it('is reachable through resolveSecretValue via the vault: prefix', async () => {
       sandbox.stub(vaultHttp, 'get').resolves({
-        body: JSON.stringify({data: {data: {apiToken: 'via-prefix'}}}),
+        body: JSON.stringify({data: {data: {apiToken: 'via-prefix'}, metadata: {version: 1}}}),
         statusCode: 200,
         statusMessage: 'OK',
       })

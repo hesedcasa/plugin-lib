@@ -3,6 +3,7 @@ import {default as http} from 'node:http'
 import {default as https} from 'node:https'
 
 const DEFAULT_VAULT_ADDR = 'http://127.0.0.1:8200'
+const DEFAULT_VAULT_TIMEOUT_MS = 30_000
 
 export interface VaultResponse {
   body: string
@@ -19,6 +20,8 @@ export interface VaultResponse {
 export const vaultHttp = {
   get(url: string, token: string): Promise<VaultResponse> {
     const transport = url.startsWith('https:') ? https : http
+    const configured = Number(process.env.VAULT_REQUEST_TIMEOUT)
+    const timeout = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_VAULT_TIMEOUT_MS
     return new Promise<VaultResponse>((resolve, reject) => {
       const request = transport.request(url, {headers: {'X-Vault-Token': token}, method: 'GET'}, (response) => {
         let body = ''
@@ -26,6 +29,9 @@ export const vaultHttp = {
         response.on('data', (chunk: string) => {
           body += chunk
         })
+        // Without this, a response stream that errors after headers (peer reset,
+        // truncated body) would never fire 'end' and leave the promise pending.
+        response.on('error', reject)
         response.on('end', () => {
           resolve({
             body,
@@ -35,6 +41,11 @@ export const vaultHttp = {
         })
       })
       request.on('error', reject)
+      // Guard against a server that accepts the connection then stalls; destroying
+      // the request surfaces the timeout through the 'error' handler above.
+      request.setTimeout(timeout, () => {
+        request.destroy(new Error(`Vault request timed out after ${timeout}ms`))
+      })
       request.end()
     })
   },
@@ -79,15 +90,24 @@ export async function resolveVaultSecret(reference: string): Promise<string> {
     throw new Error(`Vault request to '${url}' failed with status ${response.statusCode} ${response.statusMessage}`)
   }
 
-  let parsed: {data?: Record<string, unknown> & {data?: Record<string, unknown>}}
+  let parsed: {data?: Record<string, unknown>}
   try {
     parsed = JSON.parse(response.body)
   } catch {
     throw new Error(`Vault returned a non-JSON response from '${url}'`)
   }
 
-  // KV v2 nests the secret under data.data; KV v1 stores it directly under data.
-  const secretData = (parsed.data?.data ?? parsed.data) as Record<string, unknown> | undefined
+  // KV v2 nests the secret under data.data and always ships a sibling data.metadata;
+  // KV v1 stores fields directly under data. Keying on `metadata` avoids misreading a
+  // KV v1 secret that happens to have a field literally named `data`.
+  const outer = parsed.data
+  const isKvV2 =
+    outer !== undefined &&
+    'metadata' in outer &&
+    typeof outer.data === 'object' &&
+    outer.data !== null &&
+    !Array.isArray(outer.data)
+  const secretData = (isKvV2 ? outer.data : outer) as Record<string, unknown> | undefined
   const value = secretData?.[key]
 
   if (value === undefined) {
