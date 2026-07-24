@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/hesedcasa/plugin-lib/compare/v0.10.1...v0.11.0) (2026-07-24)
+
+
+### 🎉 Features
+
+* **secrets:** add HashiCorp Vault resolver for env storage/retrieval ([#49](https://github.com/hesedcasa/plugin-lib/issues/49)) ([8e1cc10](https://github.com/hesedcasa/plugin-lib/commit/8e1cc10ba66d691d18b534b6424d04d399f866f0))
+
 ## [0.10.1](https://github.com/hesedcasa/plugin-lib/compare/v0.10.0...v0.10.1) (2026-07-10)
 
 
