@@ -1,8 +1,11 @@
+import type {AddressInfo} from 'node:net'
+
 import {expect} from 'chai'
 import {default as fs} from 'fs-extra'
+import {createServer} from 'node:http'
 import {createSandbox} from 'sinon'
 
-import {resolveSecrets, resolveSecretValue} from '../src/secrets.js'
+import {resolveSecrets, resolveSecretValue, resolveVaultSecret, vaultHttp} from '../src/secrets.js'
 
 describe('secrets', () => {
   const sandbox = createSandbox()
@@ -10,6 +13,9 @@ describe('secrets', () => {
   afterEach(() => {
     sandbox.restore()
     delete process.env.TEST_SECRET_VAR
+    delete process.env.VAULT_ADDR
+    delete process.env.VAULT_TOKEN
+    delete process.env.VAULT_REQUEST_TIMEOUT
   })
 
   describe('resolveSecretValue', () => {
@@ -53,6 +59,150 @@ describe('secrets', () => {
           "Failed to read secret from file '/nonexistent/secret'",
         )
       }
+    })
+  })
+
+  describe('resolveVaultSecret', () => {
+    beforeEach(() => {
+      process.env.VAULT_TOKEN = 'test-token'
+    })
+
+    it('resolves a key from a KV v2 secret', async () => {
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {apiToken: 'kv2-secret'}, metadata: {version: 1}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/data/app#apiToken')).to.equal('kv2-secret')
+      expect(get.calledOnceWith('http://127.0.0.1:8200/v1/secret/data/app', 'test-token')).to.be.true
+    })
+
+    it('resolves a key from a KV v1 secret', async () => {
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'kv1-secret'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('kv1-secret')
+    })
+
+    it('resolves a KV v1 secret that itself contains a field named data', async () => {
+      // No metadata sibling → treated as KV v1, so the literal `data` field must
+      // not be mistaken for a KV v2 payload.
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'kv1-with-data', data: {nested: 'ignore-me'}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('kv1-with-data')
+    })
+
+    it('reads a payload with a metadata sibling and object-valued data as KV v2', async () => {
+      // This is the canonical KV v2 envelope: `{ data: {...}, metadata: {...} }`.
+      // Real Vault always returns this shape for v2, so the nested object is the
+      // secret. (A KV v1 secret cannot reach this branch without literally
+      // storing both `metadata` and an object `data` field — a payload that is
+      // byte-identical to a v2 envelope and thus undecidable from the body alone.)
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {apiToken: 'nested-v2'}, metadata: {version: 3}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/data/app#apiToken')).to.equal('nested-v2')
+    })
+
+    it('honors VAULT_ADDR and strips trailing slashes', async () => {
+      process.env.VAULT_ADDR = 'https://vault.example.com/'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {token: 'x'}, metadata: {version: 1}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/data/app#token')
+      expect(get.firstCall.args[0]).to.equal('https://vault.example.com/v1/secret/data/app')
+    })
+
+    it('throws when the reference is missing a key', async () => {
+      try {
+        await resolveVaultSecret('secret/data/app')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('Invalid Vault reference')
+      }
+    })
+
+    it('throws when VAULT_TOKEN is not set', async () => {
+      delete process.env.VAULT_TOKEN
+      try {
+        await resolveVaultSecret('secret/data/app#apiToken')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('VAULT_TOKEN is not set')
+      }
+    })
+
+    it('throws on a non-2xx response', async () => {
+      sandbox.stub(vaultHttp, 'get').resolves({body: '', statusCode: 403, statusMessage: 'Forbidden'})
+      try {
+        await resolveVaultSecret('secret/data/app#apiToken')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('failed with status 403')
+      }
+    })
+
+    it('throws when a network error occurs', async () => {
+      sandbox.stub(vaultHttp, 'get').rejects(new Error('ECONNREFUSED'))
+      try {
+        await resolveVaultSecret('secret/data/app#apiToken')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('Failed to reach Vault')
+      }
+    })
+
+    it('rejects instead of hanging when the response stalls (real request)', async () => {
+      // Server sends headers then never ends the body; get() must time out.
+      const server = createServer((_req, res) => {
+        res.writeHead(200, {'Content-Type': 'application/json'})
+        res.write('{"data":')
+      })
+      await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      const {port} = server.address() as AddressInfo
+      process.env.VAULT_REQUEST_TIMEOUT = '75'
+      try {
+        await vaultHttp.get(`http://127.0.0.1:${port}/v1/secret/data/app`, 'test-token')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('timed out')
+      } finally {
+        server.close()
+      }
+    })
+
+    it('throws when the key is not present in the secret', async () => {
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {other: 'value'}, metadata: {version: 1}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      try {
+        await resolveVaultSecret('secret/data/app#missing')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include("Key 'missing' not found")
+      }
+    })
+
+    it('is reachable through resolveSecretValue via the vault: prefix', async () => {
+      sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {apiToken: 'via-prefix'}, metadata: {version: 1}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveSecretValue('vault:secret/data/app#apiToken')).to.equal('via-prefix')
     })
   })
 
