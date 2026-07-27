@@ -202,6 +202,9 @@ interface InfisicalToken {
 
 const infisicalTokenCache = new Map<string, InfisicalToken>()
 const infisicalLoginsInFlight = new Map<string, Promise<string>>()
+// Bumped on every clear. A login captures the generation it started in and
+// declines to populate the cache if that generation has since been retired.
+let infisicalCacheGeneration = 0
 
 /**
  * Drop any cached universal-auth access token.
@@ -209,8 +212,12 @@ const infisicalLoginsInFlight = new Map<string, Promise<string>>()
  * `resolveSecrets` resolves every field of a config concurrently, so the login
  * result is memoized to avoid one round trip per `infisical:` field. Consumers
  * that swap credentials mid-process (and tests) call this to force a re-login.
+ *
+ * Clearing also invalidates any login already in flight, so a request issued
+ * with the previous credentials cannot write its token back afterwards.
  */
 export function clearInfisicalAuthCache(): void {
+  infisicalCacheGeneration += 1
   infisicalTokenCache.clear()
   infisicalLoginsInFlight.clear()
 }
@@ -281,13 +288,20 @@ async function resolveInfisicalToken(siteUrl: string): Promise<string> {
   const inFlight = infisicalLoginsInFlight.get(cacheKey)
   if (inFlight) return inFlight
 
+  const generation = infisicalCacheGeneration
   const login = infisicalUniversalAuthLogin(siteUrl, clientId, clientSecret)
     .then((result) => {
-      infisicalTokenCache.set(cacheKey, result)
+      // A clear during the round trip means the caller rotated credentials;
+      // caching now would resurrect the state they explicitly dropped. The
+      // in-flight callers still get this token — it is what their own request
+      // returned — but nothing after them inherits it.
+      if (generation === infisicalCacheGeneration) infisicalTokenCache.set(cacheKey, result)
       return result.token
     })
     .finally(() => {
-      infisicalLoginsInFlight.delete(cacheKey)
+      // Retract only our own entry: a clear may already have replaced it with a
+      // fresher login that must not be evicted here.
+      if (infisicalLoginsInFlight.get(cacheKey) === login) infisicalLoginsInFlight.delete(cacheKey)
     })
 
   infisicalLoginsInFlight.set(cacheKey, login)

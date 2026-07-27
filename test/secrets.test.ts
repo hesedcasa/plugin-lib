@@ -5,6 +5,8 @@ import {default as fs} from 'fs-extra'
 import {createServer} from 'node:http'
 import {createSandbox} from 'sinon'
 
+import type {InfisicalResponse} from '../src/secrets.js'
+
 import {
   clearInfisicalAuthCache,
   infisicalHttp,
@@ -310,6 +312,40 @@ describe('secrets', () => {
       await Promise.all([resolveInfisicalSecret('proj-123/prod#A'), resolveInfisicalSecret('proj-123/prod#B')])
       await resolveInfisicalSecret('proj-123/prod#C')
       expect(post.callCount).to.equal(1)
+    })
+
+    it('does not let an in-flight login repopulate a cleared cache', async () => {
+      delete process.env.INFISICAL_TOKEN
+      process.env.INFISICAL_CLIENT_ID = 'client-id'
+      process.env.INFISICAL_CLIENT_SECRET = 'client-secret'
+
+      let releaseLogin!: (value: InfisicalResponse) => void
+      const pendingLogin = new Promise<InfisicalResponse>((resolve) => {
+        releaseLogin = resolve
+      })
+      const post = sandbox.stub(infisicalHttp, 'post')
+      post.onFirstCall().returns(pendingLogin)
+      post.onSecondCall().resolves({
+        body: JSON.stringify({accessToken: 'second-token', expiresIn: 3600}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('value'))
+
+      // Credentials are rotated while the first login is still on the wire.
+      const inFlight = resolveInfisicalSecret('proj-123/prod#A')
+      clearInfisicalAuthCache()
+      releaseLogin({
+        body: JSON.stringify({accessToken: 'first-token', expiresIn: 3600}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await inFlight
+
+      // The stale token must not survive the clear: the next resolution logs in again.
+      await resolveInfisicalSecret('proj-123/prod#B')
+      expect(post.callCount).to.equal(2)
+      expect(get.secondCall.args[1]).to.equal('second-token')
     })
 
     it('does not cache a token when the login response omits expiresIn', async () => {
