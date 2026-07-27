@@ -21,6 +21,8 @@ export {formatAsToon} from './format.js'
 export {HostConfigCommand} from './host-command.js'
 export {
   clearInfisicalAuthCache,
+  clearInfisicalSecretCache,
+  clearVaultSecretCache,
   infisicalHttp,
   type InfisicalResponse,
   resolveInfisicalSecret,

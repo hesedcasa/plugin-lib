@@ -5,10 +5,12 @@ import {default as fs} from 'fs-extra'
 import {createServer} from 'node:http'
 import {createSandbox} from 'sinon'
 
-import type {InfisicalResponse} from '../src/secrets.js'
+import type {InfisicalResponse, VaultResponse} from '../src/secrets.js'
 
 import {
   clearInfisicalAuthCache,
+  clearInfisicalSecretCache,
+  clearVaultSecretCache,
   infisicalHttp,
   resolveInfisicalSecret,
   resolveSecrets,
@@ -29,7 +31,11 @@ describe('secrets', () => {
   afterEach(() => {
     sandbox.restore()
     clearInfisicalAuthCache()
+    clearInfisicalSecretCache()
+    clearVaultSecretCache()
     delete process.env.TEST_SECRET_VAR
+    delete process.env.INFISICAL_CACHE_TTL
+    delete process.env.VAULT_CACHE_TTL
     delete process.env.VAULT_ADDR
     delete process.env.VAULT_TOKEN
     delete process.env.VAULT_REQUEST_TIMEOUT
@@ -222,6 +228,187 @@ describe('secrets', () => {
       }
     })
 
+    it('serves several keys from one path with a single request', async () => {
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {data: {apiToken: 'T', email: 'E', host: 'H'}, metadata: {version: 1}}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      // A Vault response carries the whole secret, so picking three keys out of
+      // one path must not cost three round trips.
+      const values = await Promise.all([
+        resolveVaultSecret('secret/data/app#apiToken'),
+        resolveVaultSecret('secret/data/app#host'),
+        resolveVaultSecret('secret/data/app#email'),
+      ])
+      expect(values).to.deep.equal(['T', 'H', 'E'])
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('still issues separate requests for different paths', async () => {
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await Promise.all([resolveVaultSecret('secret/one#apiToken'), resolveVaultSecret('secret/two#apiToken')])
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('refetches on a later call when no TTL is configured', async () => {
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('reuses a cached secret while VAULT_CACHE_TTL is live', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T', host: 'H'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('T')
+      expect(await resolveVaultSecret('secret/app#host')).to.equal('H')
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('T')
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('refetches once a cached secret has expired', async () => {
+      process.env.VAULT_CACHE_TTL = '0.02'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40)
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('drops cached secrets on clearVaultSecretCache', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+      clearVaultSecretCache()
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not let an in-flight fetch repopulate a cleared cache', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+
+      let releaseFetch!: (value: VaultResponse) => void
+      const pendingFetch = new Promise<VaultResponse>((resolve) => {
+        releaseFetch = resolve
+      })
+      const get = sandbox.stub(vaultHttp, 'get')
+      get.onFirstCall().returns(pendingFetch)
+      get.onSecondCall().resolves({
+        body: JSON.stringify({data: {apiToken: 'second'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+
+      const inFlight = resolveVaultSecret('secret/app#apiToken')
+      clearVaultSecretCache()
+      releaseFetch({body: JSON.stringify({data: {apiToken: 'first'}}), statusCode: 200, statusMessage: 'OK'})
+      await inFlight
+
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('second')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not serve a cached secret to a different VAULT_TOKEN', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get')
+      get.onFirstCall().resolves({
+        body: JSON.stringify({data: {apiToken: 'privileged'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      get.onSecondCall().resolves({body: '', statusCode: 403, statusMessage: 'Forbidden'})
+
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('privileged')
+
+      // Swapping to a less-privileged token must go back to Vault for
+      // authorization rather than replaying the previous identity's value.
+      process.env.VAULT_TOKEN = 'restricted-token'
+      try {
+        await resolveVaultSecret('secret/app#apiToken')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('failed with status 403')
+      }
+
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('stops serving a cached secret once VAULT_CACHE_TTL is switched off', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+
+      // The entry was stored under a 60s TTL, but caching is now disabled.
+      delete process.env.VAULT_CACHE_TTL
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('honours a shortened VAULT_CACHE_TTL against an existing entry', async () => {
+      process.env.VAULT_CACHE_TTL = '600'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30)
+      })
+      // Shortened below the entry's age, so it is already stale.
+      process.env.VAULT_CACHE_TTL = '0.01'
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('reports a missing key without caching it as a failure', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      try {
+        await resolveVaultSecret('secret/app#missing')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include("Key 'missing' not found")
+      }
+
+      // The path itself was fetched successfully, so a sibling key is served
+      // from that same cached payload.
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('T')
+      expect(get.callCount).to.equal(1)
+    })
+
     it('is reachable through resolveSecretValue via the vault: prefix', async () => {
       sandbox.stub(vaultHttp, 'get').resolves({
         body: JSON.stringify({data: {data: {apiToken: 'via-prefix'}, metadata: {version: 1}}}),
@@ -347,6 +534,137 @@ describe('secrets', () => {
       await resolveInfisicalSecret('proj-123/prod#B')
       expect(post.callCount).to.equal(2)
       expect(get.secondCall.args[1]).to.equal('second-token')
+    })
+
+    it('shares one request between concurrent resolutions of the same reference', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('deduped'))
+      const values = await Promise.all([
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+      ])
+      expect(values).to.deep.equal(['deduped', 'deduped', 'deduped'])
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('still issues separate requests for different references', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await Promise.all([resolveInfisicalSecret('proj-123/prod#A'), resolveInfisicalSecret('proj-123/prod#B')])
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('treats the same secret name in a different path as a distinct reference', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await Promise.all([
+        resolveInfisicalSecret('proj-123/prod/one#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod/two#API_TOKEN'),
+      ])
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('refetches on a later call when no TTL is configured', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('fresh'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      // Caching is opt-in; without INFISICAL_CACHE_TTL every resolution hits the API.
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('reuses a cached value while INFISICAL_CACHE_TTL is live', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('cached'))
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('refetches once a cached value has expired', async () => {
+      process.env.INFISICAL_CACHE_TTL = '0.02'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('short-lived'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40)
+      })
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('ignores a non-numeric or negative INFISICAL_CACHE_TTL', async () => {
+      process.env.INFISICAL_CACHE_TTL = 'soon'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not serve a cached value to a different INFISICAL_TOKEN', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get')
+      get.onFirstCall().resolves(infisicalSecretBody('privileged'))
+      get.onSecondCall().resolves({body: '', statusCode: 403, statusMessage: 'Forbidden'})
+
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('privileged')
+
+      process.env.INFISICAL_TOKEN = 'restricted-token'
+      try {
+        await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('failed with status 403')
+      }
+
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('stops serving a cached value once INFISICAL_CACHE_TTL is switched off', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+
+      delete process.env.INFISICAL_CACHE_TTL
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('drops cached values on clearInfisicalSecretCache', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalSecretCache()
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('drops cached values on clearInfisicalAuthCache too', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalAuthCache()
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not let an in-flight fetch repopulate a cleared value cache', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+
+      let releaseFetch!: (value: InfisicalResponse) => void
+      const pendingFetch = new Promise<InfisicalResponse>((resolve) => {
+        releaseFetch = resolve
+      })
+      const get = sandbox.stub(infisicalHttp, 'get')
+      get.onFirstCall().returns(pendingFetch)
+      get.onSecondCall().resolves(infisicalSecretBody('second'))
+      get.onThirdCall().resolves(infisicalSecretBody('third'))
+
+      const inFlight = resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalSecretCache()
+      releaseFetch(infisicalSecretBody('first'))
+      await inFlight
+
+      // The stale fetch must not have seeded the cache the clear just emptied.
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('second')
+      expect(get.callCount).to.equal(2)
     })
 
     it('does not cache a token when the login response omits expiresIn', async () => {
