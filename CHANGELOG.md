@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/hesedcasa/plugin-lib/compare/v0.12.0...v0.12.1) (2026-07-27)
+
+
+### ♻️ Chores
+
+* **secrets:** dedupe concurrent secret fetches and add opt-in value caches ([#57](https://github.com/hesedcasa/plugin-lib/issues/57)) ([7cb874c](https://github.com/hesedcasa/plugin-lib/commit/7cb874ce6f55ce9ec91d34723d5f7bbc53c6f451))
+
 ## [0.12.0](https://github.com/hesedcasa/plugin-lib/compare/v0.11.0...v0.12.0) (2026-07-27)
 
 
