@@ -26,7 +26,7 @@ $ npm install -g @hesed/plugin-lib
 $ @hesed/plugin-lib COMMAND
 running command...
 $ @hesed/plugin-lib (--version)
-@hesed/plugin-lib/0.11.0 linux-x64 node-v22.23.1
+@hesed/plugin-lib/0.12.0 linux-x64 node-v22.23.1
 $ @hesed/plugin-lib --help [COMMAND]
 USAGE
   $ @hesed/plugin-lib COMMAND
