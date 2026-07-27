@@ -19,4 +19,14 @@ export {
 export {type AuthConfig, createProfileManager, type Profiles} from './config.js'
 export {formatAsToon} from './format.js'
 export {HostConfigCommand} from './host-command.js'
-export {resolveSecrets, resolveSecretValue, resolveVaultSecret, vaultHttp, type VaultResponse} from './secrets.js'
+export {
+  clearInfisicalAuthCache,
+  infisicalHttp,
+  type InfisicalResponse,
+  resolveInfisicalSecret,
+  resolveSecrets,
+  resolveSecretValue,
+  resolveVaultSecret,
+  vaultHttp,
+  type VaultResponse,
+} from './secrets.js'
