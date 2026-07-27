@@ -69,22 +69,42 @@ export const vaultHttp = {
  * Both KV v2 (`{ data: { data: {...} } }`) and KV v1 (`{ data: {...} }`)
  * response shapes are supported.
  */
-export async function resolveVaultSecret(reference: string): Promise<string> {
-  const [path, key] = reference.split('#')
-  if (!path || !key) {
-    throw new Error(
-      `Invalid Vault reference '${reference}'. Expected format 'vault:<path>#<key>' (e.g. 'vault:secret/data/app#apiToken')`,
-    )
-  }
+type VaultSecretData = Record<string, unknown> | undefined
 
-  const token = process.env.VAULT_TOKEN
-  if (!token) {
-    throw new Error('Environment variable VAULT_TOKEN is not set')
-  }
+interface VaultCachedSecret {
+  data: VaultSecretData
+  expiresAt: number
+}
 
-  const addr = (process.env.VAULT_ADDR ?? DEFAULT_VAULT_ADDR).replace(/\/+$/, '')
-  const url = `${addr}/v1/${path.replace(/^\/+/, '')}`
+const vaultSecretCache = new Map<string, VaultCachedSecret>()
+const vaultSecretsInFlight = new Map<string, Promise<VaultSecretData>>()
+let vaultSecretCacheGeneration = 0
 
+/**
+ * How long a fetched Vault secret may be reused, in milliseconds.
+ *
+ * Off by default: every resolution hits Vault unless `VAULT_CACHE_TTL`
+ * (seconds) is set to a positive number. Opting in accepts that a secret
+ * rotated upstream stays stale until the TTL lapses.
+ */
+function vaultCacheTtlMs(): number {
+  const configured = Number(process.env.VAULT_CACHE_TTL)
+  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 0
+}
+
+/**
+ * Drop every cached Vault secret.
+ *
+ * Also invalidates any fetch already in flight, so a request issued before the
+ * clear cannot repopulate the cache afterwards.
+ */
+export function clearVaultSecretCache(): void {
+  vaultSecretCacheGeneration += 1
+  vaultSecretCache.clear()
+  vaultSecretsInFlight.clear()
+}
+
+async function fetchVaultSecretData(url: string, token: string): Promise<VaultSecretData> {
   let response: VaultResponse
   try {
     response = await vaultHttp.get(url, token)
@@ -113,7 +133,60 @@ export async function resolveVaultSecret(reference: string): Promise<string> {
     typeof outer.data === 'object' &&
     outer.data !== null &&
     !Array.isArray(outer.data)
-  const secretData = (isKvV2 ? outer.data : outer) as Record<string, unknown> | undefined
+  return (isKvV2 ? outer.data : outer) as VaultSecretData
+}
+
+/**
+ * Fetch the secret at `url`, sharing the request across callers.
+ *
+ * A Vault response carries the whole secret and the key is picked client-side,
+ * so several `vault:` fields pointing at one path are all served by a single
+ * round trip instead of one each.
+ */
+async function loadVaultSecretData(url: string, token: string): Promise<VaultSecretData> {
+  const ttl = vaultCacheTtlMs()
+  const cached = vaultSecretCache.get(url)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+
+  const inFlight = vaultSecretsInFlight.get(url)
+  if (inFlight) return inFlight
+
+  const generation = vaultSecretCacheGeneration
+  const fetching = fetchVaultSecretData(url, token)
+    .then((data) => {
+      // A clear during the round trip must not be undone by a request that
+      // started before it.
+      if (ttl > 0 && generation === vaultSecretCacheGeneration) {
+        vaultSecretCache.set(url, {data, expiresAt: Date.now() + ttl})
+      }
+
+      return data
+    })
+    .finally(() => {
+      if (vaultSecretsInFlight.get(url) === fetching) vaultSecretsInFlight.delete(url)
+    })
+
+  vaultSecretsInFlight.set(url, fetching)
+  return fetching
+}
+
+export async function resolveVaultSecret(reference: string): Promise<string> {
+  const [path, key] = reference.split('#')
+  if (!path || !key) {
+    throw new Error(
+      `Invalid Vault reference '${reference}'. Expected format 'vault:<path>#<key>' (e.g. 'vault:secret/data/app#apiToken')`,
+    )
+  }
+
+  const token = process.env.VAULT_TOKEN
+  if (!token) {
+    throw new Error('Environment variable VAULT_TOKEN is not set')
+  }
+
+  const addr = (process.env.VAULT_ADDR ?? DEFAULT_VAULT_ADDR).replace(/\/+$/, '')
+  const url = `${addr}/v1/${path.replace(/^\/+/, '')}`
+
+  const secretData = await loadVaultSecretData(url, token)
   const value = secretData?.[key]
 
   if (value === undefined) {
