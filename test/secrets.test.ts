@@ -33,6 +33,7 @@ describe('secrets', () => {
     delete process.env.VAULT_ADDR
     delete process.env.VAULT_TOKEN
     delete process.env.VAULT_REQUEST_TIMEOUT
+    delete process.env.INFISICAL_ALLOW_INSECURE_HTTP
     delete process.env.INFISICAL_CLIENT_ID
     delete process.env.INFISICAL_CLIENT_SECRET
     delete process.env.INFISICAL_ENVIRONMENT
@@ -362,6 +363,65 @@ describe('secrets', () => {
       await resolveInfisicalSecret('proj-123/prod#A')
       await resolveInfisicalSecret('proj-123/prod#B')
       expect(post.callCount).to.equal(2)
+    })
+
+    it('refuses to send credentials over plaintext HTTP to a non-loopback host', async () => {
+      process.env.INFISICAL_SITE_URL = 'http://infisical.internal'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('never-fetched'))
+      try {
+        await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('plaintext HTTP')
+      }
+
+      // The guard must run before anything reaches the wire.
+      expect(get.called).to.be.false
+    })
+
+    it('blocks plaintext HTTP before a universal-auth login leaks the client secret', async () => {
+      delete process.env.INFISICAL_TOKEN
+      process.env.INFISICAL_CLIENT_ID = 'client-id'
+      process.env.INFISICAL_CLIENT_SECRET = 'client-secret'
+      process.env.INFISICAL_SITE_URL = 'http://infisical.internal'
+      const post = sandbox.stub(infisicalHttp, 'post').resolves({
+        body: JSON.stringify({accessToken: 'leaked', expiresIn: 3600}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      try {
+        await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+        expect.fail('Expected error to be thrown')
+      } catch {
+        // asserted below
+      }
+
+      expect(post.called).to.be.false
+    })
+
+    for (const siteUrl of ['http://127.0.0.1:8080', 'http://localhost:8080', 'http://[::1]:8080']) {
+      it(`allows plaintext HTTP to the loopback address ${siteUrl}`, async () => {
+        process.env.INFISICAL_SITE_URL = siteUrl
+        sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('loopback-ok'))
+        expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('loopback-ok')
+      })
+    }
+
+    it('allows non-loopback plaintext HTTP when INFISICAL_ALLOW_INSECURE_HTTP is set', async () => {
+      process.env.INFISICAL_ALLOW_INSECURE_HTTP = 'true'
+      process.env.INFISICAL_SITE_URL = 'http://infisical.internal'
+      sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('opted-in'))
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('opted-in')
+    })
+
+    it('throws on a malformed site URL', async () => {
+      process.env.INFISICAL_SITE_URL = 'not-a-url'
+      try {
+        await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('Invalid Infisical site URL')
+      }
     })
 
     it('throws when the reference is missing a secret name', async () => {

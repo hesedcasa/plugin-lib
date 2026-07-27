@@ -308,6 +308,35 @@ async function resolveInfisicalToken(siteUrl: string): Promise<string> {
   return login
 }
 
+/**
+ * Refuse to put Infisical credentials on an unencrypted wire.
+ *
+ * The default site URL is HTTPS, so this only bites when an operator has
+ * explicitly pointed `INFISICAL_SITE_URL` at an `http://` endpoint. Loopback
+ * stays allowed — a sidecar or `kubectl port-forward` has no network path for
+ * an intermediary to sit on — and `INFISICAL_ALLOW_INSECURE_HTTP=true` is the
+ * escape hatch for a deployment that terminates TLS at a trusted proxy.
+ */
+function assertInfisicalTransportIsSafe(siteUrl: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(siteUrl)
+  } catch {
+    throw new Error(`Invalid Infisical site URL '${siteUrl}'`)
+  }
+
+  if (parsed.protocol !== 'http:') return
+
+  // URL keeps IPv6 hosts in bracketed form; strip them before comparing.
+  const hostname = parsed.hostname.replaceAll(/^\[|]$/g, '')
+  const isLoopback = hostname === 'localhost' || hostname === '::1' || /^127\./.test(hostname)
+  if (isLoopback || process.env.INFISICAL_ALLOW_INSECURE_HTTP === 'true') return
+
+  throw new Error(
+    `Refusing to send Infisical credentials over plaintext HTTP to '${siteUrl}'. Use https://, target a loopback address, or set INFISICAL_ALLOW_INSECURE_HTTP=true to override`,
+  )
+}
+
 interface InfisicalReference {
   environment: string
   projectId: string
@@ -367,11 +396,17 @@ function parseInfisicalReference(reference: string): InfisicalReference {
  * `INFISICAL_TOKEN`, or universal auth via `INFISICAL_CLIENT_ID` and
  * `INFISICAL_CLIENT_SECRET`. `INFISICAL_SITE_URL` points at a self-hosted
  * instance (defaults to `https://app.infisical.com`).
+ *
+ * A plaintext `http://` site URL is refused unless it targets a loopback
+ * address or `INFISICAL_ALLOW_INSECURE_HTTP=true` is set — see
+ * `assertInfisicalTransportIsSafe`.
  */
 export async function resolveInfisicalSecret(reference: string): Promise<string> {
   const {environment, projectId, secretName, secretPath} = parseInfisicalReference(reference)
 
   const siteUrl = (process.env.INFISICAL_SITE_URL ?? DEFAULT_INFISICAL_SITE_URL).replace(/\/+$/, '')
+  // Checked before the login so credentials are never put on the wire.
+  assertInfisicalTransportIsSafe(siteUrl)
   const token = await resolveInfisicalToken(siteUrl)
 
   const query = new URLSearchParams({
