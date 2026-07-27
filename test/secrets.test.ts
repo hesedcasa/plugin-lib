@@ -331,6 +331,64 @@ describe('secrets', () => {
       expect(get.callCount).to.equal(2)
     })
 
+    it('does not serve a cached secret to a different VAULT_TOKEN', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get')
+      get.onFirstCall().resolves({
+        body: JSON.stringify({data: {apiToken: 'privileged'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      get.onSecondCall().resolves({body: '', statusCode: 403, statusMessage: 'Forbidden'})
+
+      expect(await resolveVaultSecret('secret/app#apiToken')).to.equal('privileged')
+
+      // Swapping to a less-privileged token must go back to Vault for
+      // authorization rather than replaying the previous identity's value.
+      process.env.VAULT_TOKEN = 'restricted-token'
+      try {
+        await resolveVaultSecret('secret/app#apiToken')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('failed with status 403')
+      }
+
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('stops serving a cached secret once VAULT_CACHE_TTL is switched off', async () => {
+      process.env.VAULT_CACHE_TTL = '60'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+
+      // The entry was stored under a 60s TTL, but caching is now disabled.
+      delete process.env.VAULT_CACHE_TTL
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('honours a shortened VAULT_CACHE_TTL against an existing entry', async () => {
+      process.env.VAULT_CACHE_TTL = '600'
+      const get = sandbox.stub(vaultHttp, 'get').resolves({
+        body: JSON.stringify({data: {apiToken: 'T'}}),
+        statusCode: 200,
+        statusMessage: 'OK',
+      })
+      await resolveVaultSecret('secret/app#apiToken')
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30)
+      })
+      // Shortened below the entry's age, so it is already stale.
+      process.env.VAULT_CACHE_TTL = '0.01'
+      await resolveVaultSecret('secret/app#apiToken')
+      expect(get.callCount).to.equal(2)
+    })
+
     it('reports a missing key without caching it as a failure', async () => {
       process.env.VAULT_CACHE_TTL = '60'
       const get = sandbox.stub(vaultHttp, 'get').resolves({
@@ -536,6 +594,35 @@ describe('secrets', () => {
       process.env.INFISICAL_CACHE_TTL = 'soon'
       const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
       await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not serve a cached value to a different INFISICAL_TOKEN', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get')
+      get.onFirstCall().resolves(infisicalSecretBody('privileged'))
+      get.onSecondCall().resolves({body: '', statusCode: 403, statusMessage: 'Forbidden'})
+
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('privileged')
+
+      process.env.INFISICAL_TOKEN = 'restricted-token'
+      try {
+        await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+        expect.fail('Expected error to be thrown')
+      } catch (error) {
+        expect(error instanceof Error ? error.message : String(error)).to.include('failed with status 403')
+      }
+
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('stops serving a cached value once INFISICAL_CACHE_TTL is switched off', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+
+      delete process.env.INFISICAL_CACHE_TTL
       await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
       expect(get.callCount).to.equal(2)
     })

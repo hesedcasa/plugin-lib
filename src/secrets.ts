@@ -1,6 +1,20 @@
 import {default as fs} from 'fs-extra'
+import {createHash} from 'node:crypto'
 import {default as http} from 'node:http'
 import {default as https} from 'node:https'
+
+/**
+ * Identify a credential without retaining it.
+ *
+ * Cache keys embed this so a value fetched under one identity is never handed
+ * to another — swapping to a less-privileged token must go back to the server
+ * for authorization rather than being served from cache. Hashed rather than
+ * stored verbatim so the credential itself does not sit in a map key.
+ */
+function credentialFingerprint(credential: string | undefined): string {
+  if (!credential) return 'anonymous'
+  return createHash('sha256').update(credential).digest('hex').slice(0, 16)
+}
 
 const DEFAULT_VAULT_ADDR = 'http://127.0.0.1:8200'
 const DEFAULT_VAULT_TIMEOUT_MS = 30_000
@@ -73,7 +87,9 @@ type VaultSecretData = Record<string, unknown> | undefined
 
 interface VaultCachedSecret {
   data: VaultSecretData
-  expiresAt: number
+  // Stored rather than a precomputed expiry so a TTL that is shortened or
+  // switched off after the fact takes effect on the next read.
+  storedAt: number
 }
 
 const vaultSecretCache = new Map<string, VaultCachedSecret>()
@@ -144,11 +160,18 @@ async function fetchVaultSecretData(url: string, token: string): Promise<VaultSe
  * round trip instead of one each.
  */
 async function loadVaultSecretData(url: string, token: string): Promise<VaultSecretData> {
-  const ttl = vaultCacheTtlMs()
-  const cached = vaultSecretCache.get(url)
-  if (cached && cached.expiresAt > Date.now()) return cached.data
+  // The token is part of the identity: a value read under one token must not be
+  // served to another, or swapping to a less-privileged token would silently
+  // keep returning material Vault would now refuse.
+  const cacheKey = `${url}|${credentialFingerprint(token)}`
 
-  const inFlight = vaultSecretsInFlight.get(url)
+  const ttl = vaultCacheTtlMs()
+  const cached = vaultSecretCache.get(cacheKey)
+  // Measured against the TTL in force right now, so disabling or shortening
+  // VAULT_CACHE_TTL takes effect immediately instead of at the old expiry.
+  if (ttl > 0 && cached && Date.now() - cached.storedAt < ttl) return cached.data
+
+  const inFlight = vaultSecretsInFlight.get(cacheKey)
   if (inFlight) return inFlight
 
   const generation = vaultSecretCacheGeneration
@@ -157,16 +180,16 @@ async function loadVaultSecretData(url: string, token: string): Promise<VaultSec
       // A clear during the round trip must not be undone by a request that
       // started before it.
       if (ttl > 0 && generation === vaultSecretCacheGeneration) {
-        vaultSecretCache.set(url, {data, expiresAt: Date.now() + ttl})
+        vaultSecretCache.set(cacheKey, {data, storedAt: Date.now()})
       }
 
       return data
     })
     .finally(() => {
-      if (vaultSecretsInFlight.get(url) === fetching) vaultSecretsInFlight.delete(url)
+      if (vaultSecretsInFlight.get(cacheKey) === fetching) vaultSecretsInFlight.delete(cacheKey)
     })
 
-  vaultSecretsInFlight.set(url, fetching)
+  vaultSecretsInFlight.set(cacheKey, fetching)
   return fetching
 }
 
@@ -298,7 +321,9 @@ export function clearInfisicalAuthCache(): void {
 }
 
 interface InfisicalCachedSecret {
-  expiresAt: number
+  // Stored rather than a precomputed expiry so a TTL that is shortened or
+  // switched off after the fact takes effect on the next read.
+  storedAt: number
   value: string
 }
 
@@ -544,11 +569,24 @@ export async function resolveInfisicalSecret(reference: string): Promise<string>
   // Checked before the login so credentials are never put on the wire.
   assertInfisicalTransportIsSafe(siteUrl)
 
-  const cacheKey = [siteUrl, target.projectId, target.environment, target.secretPath, target.secretName].join('|')
+  // The credential is part of the identity, so rotating INFISICAL_TOKEN (or the
+  // universal-auth client) cannot be served a value read under the previous one.
+  const credential =
+    process.env.INFISICAL_TOKEN ?? `${process.env.INFISICAL_CLIENT_ID}:${process.env.INFISICAL_CLIENT_SECRET}`
+  const cacheKey = [
+    siteUrl,
+    target.projectId,
+    target.environment,
+    target.secretPath,
+    target.secretName,
+    credentialFingerprint(credential),
+  ].join('|')
 
   const ttl = infisicalCacheTtlMs()
   const cached = infisicalSecretCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) return cached.value
+  // Measured against the TTL in force right now, so disabling or shortening
+  // INFISICAL_CACHE_TTL takes effect immediately instead of at the old expiry.
+  if (ttl > 0 && cached && Date.now() - cached.storedAt < ttl) return cached.value
 
   // `resolveSecrets` fans out over every field at once, so two fields holding the
   // same reference would otherwise each open their own request.
@@ -561,7 +599,7 @@ export async function resolveInfisicalSecret(reference: string): Promise<string>
       // Same guard as the auth cache: a clear during the round trip must not be
       // undone by a request that started before it.
       if (ttl > 0 && generation === infisicalSecretCacheGeneration) {
-        infisicalSecretCache.set(cacheKey, {expiresAt: Date.now() + ttl, value})
+        infisicalSecretCache.set(cacheKey, {storedAt: Date.now(), value})
       }
 
       return value
