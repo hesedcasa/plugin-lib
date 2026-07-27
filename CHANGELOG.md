@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/hesedcasa/plugin-lib/compare/v0.11.0...v0.12.0) (2026-07-27)
+
+
+### 🎉 Features
+
+* **secrets:** add Infisical resolver for env storage/retrieval ([#55](https://github.com/hesedcasa/plugin-lib/issues/55)) ([6ffff87](https://github.com/hesedcasa/plugin-lib/commit/6ffff873dd47abaf8e22aa41445a0d3de56b18b8))
+
 ## [0.11.0](https://github.com/hesedcasa/plugin-lib/compare/v0.10.1...v0.11.0) (2026-07-24)
 
 
