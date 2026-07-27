@@ -9,6 +9,7 @@ import type {InfisicalResponse} from '../src/secrets.js'
 
 import {
   clearInfisicalAuthCache,
+  clearInfisicalSecretCache,
   infisicalHttp,
   resolveInfisicalSecret,
   resolveSecrets,
@@ -29,7 +30,9 @@ describe('secrets', () => {
   afterEach(() => {
     sandbox.restore()
     clearInfisicalAuthCache()
+    clearInfisicalSecretCache()
     delete process.env.TEST_SECRET_VAR
+    delete process.env.INFISICAL_CACHE_TTL
     delete process.env.VAULT_ADDR
     delete process.env.VAULT_TOKEN
     delete process.env.VAULT_REQUEST_TIMEOUT
@@ -347,6 +350,108 @@ describe('secrets', () => {
       await resolveInfisicalSecret('proj-123/prod#B')
       expect(post.callCount).to.equal(2)
       expect(get.secondCall.args[1]).to.equal('second-token')
+    })
+
+    it('shares one request between concurrent resolutions of the same reference', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('deduped'))
+      const values = await Promise.all([
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod#API_TOKEN'),
+      ])
+      expect(values).to.deep.equal(['deduped', 'deduped', 'deduped'])
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('still issues separate requests for different references', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await Promise.all([resolveInfisicalSecret('proj-123/prod#A'), resolveInfisicalSecret('proj-123/prod#B')])
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('treats the same secret name in a different path as a distinct reference', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await Promise.all([
+        resolveInfisicalSecret('proj-123/prod/one#API_TOKEN'),
+        resolveInfisicalSecret('proj-123/prod/two#API_TOKEN'),
+      ])
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('refetches on a later call when no TTL is configured', async () => {
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('fresh'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      // Caching is opt-in; without INFISICAL_CACHE_TTL every resolution hits the API.
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('reuses a cached value while INFISICAL_CACHE_TTL is live', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('cached'))
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('cached')
+      expect(get.callCount).to.equal(1)
+    })
+
+    it('refetches once a cached value has expired', async () => {
+      process.env.INFISICAL_CACHE_TTL = '0.02'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('short-lived'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40)
+      })
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('ignores a non-numeric or negative INFISICAL_CACHE_TTL', async () => {
+      process.env.INFISICAL_CACHE_TTL = 'soon'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('drops cached values on clearInfisicalSecretCache', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalSecretCache()
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('drops cached values on clearInfisicalAuthCache too', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+      const get = sandbox.stub(infisicalHttp, 'get').resolves(infisicalSecretBody('v'))
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalAuthCache()
+      await resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      expect(get.callCount).to.equal(2)
+    })
+
+    it('does not let an in-flight fetch repopulate a cleared value cache', async () => {
+      process.env.INFISICAL_CACHE_TTL = '60'
+
+      let releaseFetch!: (value: InfisicalResponse) => void
+      const pendingFetch = new Promise<InfisicalResponse>((resolve) => {
+        releaseFetch = resolve
+      })
+      const get = sandbox.stub(infisicalHttp, 'get')
+      get.onFirstCall().returns(pendingFetch)
+      get.onSecondCall().resolves(infisicalSecretBody('second'))
+      get.onThirdCall().resolves(infisicalSecretBody('third'))
+
+      const inFlight = resolveInfisicalSecret('proj-123/prod#API_TOKEN')
+      clearInfisicalSecretCache()
+      releaseFetch(infisicalSecretBody('first'))
+      await inFlight
+
+      // The stale fetch must not have seeded the cache the clear just emptied.
+      expect(await resolveInfisicalSecret('proj-123/prod#API_TOKEN')).to.equal('second')
+      expect(get.callCount).to.equal(2)
     })
 
     it('does not cache a token when the login response omits expiresIn', async () => {

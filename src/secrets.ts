@@ -220,6 +220,43 @@ export function clearInfisicalAuthCache(): void {
   infisicalCacheGeneration += 1
   infisicalTokenCache.clear()
   infisicalLoginsInFlight.clear()
+  // Values fetched under the outgoing credentials should not outlive them.
+  clearInfisicalSecretCache()
+}
+
+interface InfisicalCachedSecret {
+  expiresAt: number
+  value: string
+}
+
+const infisicalSecretCache = new Map<string, InfisicalCachedSecret>()
+const infisicalSecretsInFlight = new Map<string, Promise<string>>()
+let infisicalSecretCacheGeneration = 0
+
+/**
+ * How long a resolved secret value may be reused, in milliseconds.
+ *
+ * Off by default: `resolveInfisicalSecret` always hits the API unless
+ * `INFISICAL_CACHE_TTL` (seconds) is set to a positive number. Callers that opt
+ * in accept that a secret rotated upstream stays stale until the TTL lapses,
+ * which is why this is not on for everyone.
+ */
+function infisicalCacheTtlMs(): number {
+  const configured = Number(process.env.INFISICAL_CACHE_TTL)
+  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 0
+}
+
+/**
+ * Drop every cached secret value.
+ *
+ * Also invalidates any fetch already in flight, so a request issued before the
+ * clear cannot repopulate the cache afterwards. `clearInfisicalAuthCache()`
+ * calls this too — rotating credentials discards cached values as well.
+ */
+export function clearInfisicalSecretCache(): void {
+  infisicalSecretCacheGeneration += 1
+  infisicalSecretCache.clear()
+  infisicalSecretsInFlight.clear()
 }
 
 async function sendInfisical(send: () => Promise<InfisicalResponse>, url: string): Promise<InfisicalResponse> {
@@ -401,12 +438,8 @@ function parseInfisicalReference(reference: string): InfisicalReference {
  * address or `INFISICAL_ALLOW_INSECURE_HTTP=true` is set — see
  * `assertInfisicalTransportIsSafe`.
  */
-export async function resolveInfisicalSecret(reference: string): Promise<string> {
-  const {environment, projectId, secretName, secretPath} = parseInfisicalReference(reference)
-
-  const siteUrl = (process.env.INFISICAL_SITE_URL ?? DEFAULT_INFISICAL_SITE_URL).replace(/\/+$/, '')
-  // Checked before the login so credentials are never put on the wire.
-  assertInfisicalTransportIsSafe(siteUrl)
+async function fetchInfisicalSecret(siteUrl: string, target: InfisicalReference): Promise<string> {
+  const {environment, projectId, secretName, secretPath} = target
   const token = await resolveInfisicalToken(siteUrl)
 
   const query = new URLSearchParams({
@@ -429,6 +462,43 @@ export async function resolveInfisicalSecret(reference: string): Promise<string>
   }
 
   return String(value)
+}
+
+export async function resolveInfisicalSecret(reference: string): Promise<string> {
+  const target = parseInfisicalReference(reference)
+
+  const siteUrl = (process.env.INFISICAL_SITE_URL ?? DEFAULT_INFISICAL_SITE_URL).replace(/\/+$/, '')
+  // Checked before the login so credentials are never put on the wire.
+  assertInfisicalTransportIsSafe(siteUrl)
+
+  const cacheKey = [siteUrl, target.projectId, target.environment, target.secretPath, target.secretName].join('|')
+
+  const ttl = infisicalCacheTtlMs()
+  const cached = infisicalSecretCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  // `resolveSecrets` fans out over every field at once, so two fields holding the
+  // same reference would otherwise each open their own request.
+  const inFlight = infisicalSecretsInFlight.get(cacheKey)
+  if (inFlight) return inFlight
+
+  const generation = infisicalSecretCacheGeneration
+  const fetching = fetchInfisicalSecret(siteUrl, target)
+    .then((value) => {
+      // Same guard as the auth cache: a clear during the round trip must not be
+      // undone by a request that started before it.
+      if (ttl > 0 && generation === infisicalSecretCacheGeneration) {
+        infisicalSecretCache.set(cacheKey, {expiresAt: Date.now() + ttl, value})
+      }
+
+      return value
+    })
+    .finally(() => {
+      if (infisicalSecretsInFlight.get(cacheKey) === fetching) infisicalSecretsInFlight.delete(cacheKey)
+    })
+
+  infisicalSecretsInFlight.set(cacheKey, fetching)
+  return fetching
 }
 
 export async function resolveSecretValue(value: string): Promise<string> {
