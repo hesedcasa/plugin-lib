@@ -5,7 +5,7 @@ import {action} from '@oclif/core/ux'
 import {type ApiResult} from './api.js'
 import {type AuthConfig, createProfileManager, type Profiles} from './config.js'
 
-export interface FieldDef {
+export type FieldDef = {
   char?:
     | 'a'
     | 'b'
@@ -40,7 +40,7 @@ export interface FieldDef {
   type: 'boolean' | 'number' | 'string'
 }
 
-export interface AuthCommandOptions<T = AuthConfig> {
+export type AuthCommandOptions<T = AuthConfig> = {
   clearClients: () => void
   configFile?: string
   fields?: FieldDef[]
@@ -48,15 +48,21 @@ export interface AuthCommandOptions<T = AuthConfig> {
   testConnection: (auth: T) => Promise<ApiResult>
 }
 
-function buildDynamicFlags(fields: FieldDef[]) {
-  return Object.fromEntries(
-    fields.map(({char, description, name, type}) => {
-      const base = {char, description, required: !process.stdout.isTTY}
-      if (type === 'number') return [name, Flags.integer(base)]
-      if (type === 'boolean') return [name, Flags.boolean(base)]
-      return [name, Flags.string(base)]
-    }),
-  )
+function buildDynamicFlags(fields: FieldDef[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+
+  for (const {char, description, name, type} of fields) {
+    const base = {char, description, required: !process.stdout.isTTY}
+    if (type === 'number') {
+      result[name] = Flags.integer(base)
+    } else if (type === 'boolean') {
+      result[name] = Flags.boolean(base)
+    } else {
+      result[name] = Flags.string(base)
+    }
+  }
+
+  return result
 }
 
 function getLegacyDefaultFields(serviceName: string): FieldDef[] {
@@ -76,7 +82,7 @@ async function promptFieldValue(
 
   try {
     if (type === 'boolean') {
-      return confirm({
+      return await confirm({
         default: currentValue === undefined ? (def as boolean) : Boolean(currentValue),
         message: description + ':',
       })
@@ -173,7 +179,7 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
       try {
         existingProfiles = await pm.readProfiles()
       } catch {
-        existingProfiles = {} as Profiles<T>
+        existingProfiles = {}
       }
 
       if (profileName in existingProfiles) {
@@ -197,7 +203,7 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
 export function createAuthListCommand(options?: {configFile?: string}): typeof Command {
   const {configFile} = options ?? {}
 
-  interface ProfileInfo {
+  type ProfileInfo = {
     [key: string]: unknown
     default?: boolean
     name: string
@@ -238,7 +244,7 @@ export function createAuthListCommand(options?: {configFile?: string}): typeof C
       for (const profile of profileList) {
         const details = Object.entries(profile)
           .filter(([key]) => key !== 'name' && key !== 'default')
-          .map(([key, val]) => `  ${key}: ${val}`)
+          .map(([key, val]) => `  ${key}: ${String(val)}`)
           .join('\n')
         this.log(`${profile.name}${profile.default ? ' (default):' : ':'}\n${details}`)
       }
@@ -262,6 +268,7 @@ export function createAuthProfileCommand(options?: {configFile?: string}): typeo
       '<%= config.bin %> <%= command.id %>',
       '<%= config.bin %> <%= command.id %> --default test',
     ]
+
     static override flags = {
       default: Flags.string({description: 'Profile to set as default', required: false}),
     }
@@ -269,8 +276,6 @@ export function createAuthProfileCommand(options?: {configFile?: string}): typeo
     public async run(): Promise<ApiResult> {
       const {flags} = await this.parse(AuthProfile)
       const {getDefaultProfile, setDefaultProfile} = createProfileManager(this.config, undefined, configFile)
-      let profile = ''
-
       if (flags.default) {
         try {
           await setDefaultProfile(flags.default)
@@ -281,6 +286,8 @@ export function createAuthProfileCommand(options?: {configFile?: string}): typeo
 
         return {success: true}
       }
+
+      let profile = ''
 
       try {
         profile = await getDefaultProfile()
@@ -367,8 +374,8 @@ export function createAuthDeleteCommand(options?: {configFile?: string}): typeof
       }
 
       if (process.stdout.isTTY) {
-        const answer = await confirm({message: `Delete profile '${profileName}'?`})
-        if (!answer) return {success: false}
+        const isAnswer = await confirm({message: `Delete profile '${profileName}'?`})
+        if (!isAnswer) return {success: false}
       }
 
       const defaultProfile = await getDefaultProfile().catch(() => 'default')
@@ -407,7 +414,8 @@ export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOpti
     public async run(): Promise<ApiResult | void> {
       const {flags} = await this.parse(this.constructor as typeof Command)
 
-      const profileName = flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
+      const profileName: string =
+        flags.profile ?? (await input({default: 'default', message: 'Profile name:', required: true}))
       const pm = createProfileManager<T>(this.config, profileName, configFile)
       const allProfiles = await pm.readProfiles().catch(() => null)
 
@@ -422,8 +430,8 @@ export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOpti
       const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, flags, existing)
 
       if (process.stdout.isTTY) {
-        const answer = await confirm({message: 'Override existing config?'})
-        if (!answer) return
+        const isAnswer = await confirm({message: 'Override existing config?'})
+        if (!isAnswer) return
       }
 
       await pm.saveProfiles({

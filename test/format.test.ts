@@ -8,7 +8,6 @@ describe('formatAsToon', () => {
   })
 
   it('returns empty string for undefined', () => {
-    // eslint-disable-next-line unicorn/no-useless-undefined
     expect(formatAsToon(undefined)).to.equal('')
   })
 

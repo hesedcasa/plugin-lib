@@ -1,16 +1,27 @@
-import {Config} from '@oclif/core'
-import {default as fs} from 'fs-extra'
-import {default as path} from 'node:path'
+import {type Config} from '@oclif/core'
+import fs from 'fs-extra'
+import path from 'node:path'
 
 import {resolveSecrets} from './secrets.js'
 
-export interface AuthConfig {
+export type AuthConfig = {
   apiToken: string
   email?: string
   host?: string
 }
 
 export type Profiles<T = AuthConfig> = Record<string, T>
+
+type LegacyConfig = {
+  auth?: AuthConfig
+}
+
+type ModernConfig<T = AuthConfig> = {
+  defaultProfile?: string
+  profiles: Profiles<T>
+}
+
+type ConfigFile<T = AuthConfig> = LegacyConfig | ModernConfig<T>
 
 function toMessage(error: unknown, missingMsg: string): string {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -27,17 +38,17 @@ export function createProfileManager<T = AuthConfig>(config: Config, profile?: s
 
   async function loadAuthConfig(): Promise<T | undefined> {
     try {
-      const raw = await fs.readJSON(cp)
+      const raw = (await fs.readJSON(cp)) as ConfigFile<T>
       let data: T | undefined
-      if (raw.profiles) {
+      if ('profiles' in raw && raw.profiles) {
         const resolvedProfile = profile ?? raw.defaultProfile ?? 'default'
-        data = raw.profiles[resolvedProfile] as T | undefined
-      } else {
+        data = raw.profiles[resolvedProfile]
+      } else if ('auth' in raw) {
         if (profile && profile !== 'default') return undefined
         data = raw.auth as T | undefined
       }
 
-      return data === undefined ? undefined : resolveSecrets(data)
+      return data === undefined ? undefined : await resolveSecrets(data)
     } catch {
       return undefined
     }
@@ -45,8 +56,8 @@ export function createProfileManager<T = AuthConfig>(config: Config, profile?: s
 
   async function getDefaultProfile(): Promise<string> {
     try {
-      const raw = await fs.readJSON(cp)
-      return raw.defaultProfile ?? 'default'
+      const raw = (await fs.readJSON(cp)) as ConfigFile<T>
+      return 'defaultProfile' in raw ? (raw.defaultProfile ?? 'default') : 'default'
     } catch (error) {
       throw new Error(toMessage(error, 'Missing authentication config'))
     }
@@ -73,8 +84,7 @@ export function createProfileManager<T = AuthConfig>(config: Config, profile?: s
     }
 
     const profiles = (raw.profiles ?? (raw.auth ? {default: raw.auth as AuthConfig} : undefined)) as
-      | Profiles
-      | undefined
+      Profiles | undefined
     if (!profiles || !(profileName in profiles)) {
       throw new Error(`Profile '${profileName}' not found`)
     }
@@ -85,10 +95,10 @@ export function createProfileManager<T = AuthConfig>(config: Config, profile?: s
 
   async function readProfiles(): Promise<Profiles<T>> {
     try {
-      const raw = await fs.readJSON(cp)
-      if (raw.profiles) return raw.profiles as Profiles<T>
+      const raw = (await fs.readJSON(cp)) as ConfigFile<T>
+      if ('profiles' in raw && raw.profiles) return raw.profiles
       // backward compat: old { auth: {...} } format
-      if (raw.auth) return {default: raw.auth as T}
+      if ('auth' in raw && raw.auth) return {default: raw.auth as T}
       return {}
     } catch (error) {
       throw new Error(toMessage(error, 'No authentication profiles found'))

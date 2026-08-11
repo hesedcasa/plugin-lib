@@ -1,7 +1,6 @@
-import type {Config} from '@oclif/core'
 import type {LoadOptions} from '@oclif/core/interfaces'
 
-import {Command} from '@oclif/core'
+import {Command, type Config} from '@oclif/core'
 
 /**
  * Base command that preserves the host CLI's already-initialized Config.

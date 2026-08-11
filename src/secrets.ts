@@ -1,6 +1,6 @@
-import {default as fs} from 'fs-extra'
-import {default as http} from 'node:http'
-import {default as https} from 'node:https'
+import fs from 'fs-extra'
+import http from 'node:http'
+import https from 'node:https'
 
 const DEFAULT_VAULT_ADDR = 'http://127.0.0.1:8200'
 const DEFAULT_VAULT_TIMEOUT_MS = 30_000
@@ -11,7 +11,7 @@ const DEFAULT_INFISICAL_TIMEOUT_MS = 30_000
 // just under the wire doesn't race the server-side expiry.
 const INFISICAL_TOKEN_EXPIRY_SKEW_MS = 30_000
 
-export interface VaultResponse {
+export type VaultResponse = {
   body: string
   statusCode: number
   statusMessage: string
@@ -24,7 +24,7 @@ export interface VaultResponse {
  * `vaultHttp.get` the same way the suite stubs `fs` methods — no real network.
  */
 export const vaultHttp = {
-  get(url: string, token: string): Promise<VaultResponse> {
+  async get(url: string, token: string): Promise<VaultResponse> {
     const transport = url.startsWith('https:') ? https : http
     const configured = Number(process.env.VAULT_REQUEST_TIMEOUT)
     const timeout = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_VAULT_TIMEOUT_MS
@@ -70,7 +70,7 @@ export const vaultHttp = {
  * response shapes are supported.
  */
 export async function resolveVaultSecret(reference: string): Promise<string> {
-  const [path, key] = reference.split('#')
+  const [path, key] = reference.split('#', 2)
   if (!path || !key) {
     throw new Error(
       `Invalid Vault reference '${reference}'. Expected format 'vault:<path>#<key>' (e.g. 'vault:secret/data/app#apiToken')`,
@@ -123,13 +123,13 @@ export async function resolveVaultSecret(reference: string): Promise<string> {
   return String(value)
 }
 
-export interface InfisicalResponse {
+export type InfisicalResponse = {
   body: string
   statusCode: number
   statusMessage: string
 }
 
-function infisicalRequest(
+async function infisicalRequest(
   url: string,
   method: 'GET' | 'POST',
   headers: Record<string, string>,
@@ -177,10 +177,10 @@ function infisicalRequest(
  * no real network.
  */
 export const infisicalHttp = {
-  get(url: string, token: string): Promise<InfisicalResponse> {
+  async get(url: string, token: string): Promise<InfisicalResponse> {
     return infisicalRequest(url, 'GET', {accept: 'application/json', authorization: `Bearer ${token}`})
   },
-  post(url: string, payload: Record<string, unknown>): Promise<InfisicalResponse> {
+  async post(url: string, payload: Record<string, unknown>): Promise<InfisicalResponse> {
     const body = JSON.stringify(payload)
     return infisicalRequest(
       url,
@@ -195,7 +195,7 @@ export const infisicalHttp = {
   },
 }
 
-interface InfisicalToken {
+type InfisicalToken = {
   expiresAt: number
   token: string
 }
@@ -251,7 +251,7 @@ async function infisicalUniversalAuthLogin(
   clientSecret: string,
 ): Promise<InfisicalToken> {
   const url = `${siteUrl}/api/v1/auth/universal-auth/login`
-  const response = await sendInfisical(() => infisicalHttp.post(url, {clientId, clientSecret}), url)
+  const response = await sendInfisical(async () => infisicalHttp.post(url, {clientId, clientSecret}), url)
   const parsed = parseInfisicalBody<{accessToken?: unknown; expiresIn?: unknown}>(response, url)
 
   if (typeof parsed.accessToken !== 'string' || parsed.accessToken.length === 0) {
@@ -329,7 +329,7 @@ function assertInfisicalTransportIsSafe(siteUrl: string): void {
 
   // URL keeps IPv6 hosts in bracketed form; strip them before comparing.
   const hostname = parsed.hostname.replaceAll(/^\[|]$/g, '')
-  const isLoopback = hostname === 'localhost' || hostname === '::1' || /^127\./.test(hostname)
+  const isLoopback = hostname === 'localhost' || hostname === '::1' || hostname.startsWith('127.')
   if (isLoopback || process.env.INFISICAL_ALLOW_INSECURE_HTTP === 'true') return
 
   throw new Error(
@@ -337,7 +337,7 @@ function assertInfisicalTransportIsSafe(siteUrl: string): void {
   )
 }
 
-interface InfisicalReference {
+type InfisicalReference = {
   environment: string
   projectId: string
   secretName: string
@@ -359,16 +359,16 @@ function parseInfisicalReference(reference: string): InfisicalReference {
     )
   }
 
-  const inline = segments.length >= 2
+  const isInline = segments.length >= 2
 
-  const projectId = inline ? segments[0] : process.env.INFISICAL_PROJECT_ID
+  const projectId = isInline ? segments[0] : process.env.INFISICAL_PROJECT_ID
   if (!projectId) {
     throw new Error(
       `Infisical reference '${reference}' omits the project ID and environment variable INFISICAL_PROJECT_ID is not set`,
     )
   }
 
-  const environment = inline ? segments[1] : process.env.INFISICAL_ENVIRONMENT
+  const environment = isInline ? segments[1] : process.env.INFISICAL_ENVIRONMENT
   if (!environment) {
     throw new Error(
       `Infisical reference '${reference}' omits the environment and environment variable INFISICAL_ENVIRONMENT is not set`,
@@ -418,7 +418,7 @@ export async function resolveInfisicalSecret(reference: string): Promise<string>
   })
   const url = `${siteUrl}/api/v3/secrets/raw/${encodeURIComponent(secretName)}?${query.toString()}`
 
-  const response = await sendInfisical(() => infisicalHttp.get(url, token), url)
+  const response = await sendInfisical(async () => infisicalHttp.get(url, token), url)
   const parsed = parseInfisicalBody<{secret?: {secretValue?: unknown}}>(response, url)
   const value = parsed.secret?.secretValue
 

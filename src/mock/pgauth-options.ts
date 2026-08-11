@@ -1,6 +1,6 @@
 import {type ApiResult, type AuthCommandOptions, type FieldDef} from '../index.js'
 
-export interface PgAuthConfig {
+export type PgAuthConfig = {
   database: string
   host: string
   password: string
