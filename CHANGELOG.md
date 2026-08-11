@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/hesedcasa/plugin-lib/compare/v0.12.1...v0.12.2) (2026-08-11)
+
+
+### ♻️ Chores
+
+* update ESLint config and improve module type safety ([#63](https://github.com/hesedcasa/plugin-lib/issues/63)) ([9801c9f](https://github.com/hesedcasa/plugin-lib/commit/9801c9ffad5759368fc3da8633fd74cb614cc1d1))
+
 ## [0.12.1](https://github.com/hesedcasa/plugin-lib/compare/v0.12.0...v0.12.1) (2026-07-27)
 
 
