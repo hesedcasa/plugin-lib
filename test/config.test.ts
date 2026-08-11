@@ -1,8 +1,8 @@
 import type {Config} from '@oclif/core'
 
 import {expect} from 'chai'
-import {default as fs} from 'fs-extra'
-import {default as path} from 'node:path'
+import fs from 'fs-extra'
+import path from 'node:path'
 import {createSandbox} from 'sinon'
 
 import {createProfileManager} from '../src/config.js'

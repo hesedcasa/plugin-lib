@@ -2,7 +2,7 @@ import type {Command} from '@oclif/core'
 import type {Config} from '@oclif/core/interfaces'
 
 /** Variables available to oclif's lodash-style metadata templates. */
-export interface TemplateVars {
+export type TemplateVars = {
   command?: Command.Loadable | {id?: string}
   config: Config
 }
@@ -147,12 +147,12 @@ export function buildKeywords(
   return keywords
 }
 
-interface TopicRecord {
+type TopicRecord = {
   description?: string
   name: string
 }
 
-interface CommandRecord {
+type CommandRecord = {
   id: string
 }
 
