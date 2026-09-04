@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.3](https://github.com/hesedcasa/plugin-lib/compare/v0.12.2...v0.12.3) (2026-09-04)
+
+
+### 🛠️ Fixes
+
+* **auth:** surface testConnection error detail in failure messages ([#73](https://github.com/hesedcasa/plugin-lib/issues/73)) ([d879728](https://github.com/hesedcasa/plugin-lib/commit/d879728cd600f632500d96c6cf62126b6fcd5acd))
+
 ## [0.12.2](https://github.com/hesedcasa/plugin-lib/compare/v0.12.1...v0.12.2) (2026-08-11)
 
 
