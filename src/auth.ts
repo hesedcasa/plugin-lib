@@ -4,6 +4,7 @@ import {action} from '@oclif/core/ux'
 
 import {type ApiResult} from './api.js'
 import {type AuthConfig, createProfileManager, type Profiles} from './config.js'
+import {redactSecrets} from './redact.js'
 
 export type FieldDef = {
   char?:
@@ -130,6 +131,22 @@ function profileSuffix(name: string, prep: 'as' | 'for'): string {
   return name === 'default' ? '' : ` ${prep} '${name}'`
 }
 
+// A generic failure message tells the user nothing they can act on, so the
+// detail the testConnection implementation reported is appended when there is
+// one. Values that would stringify to something useless (a plain object, say)
+// are dropped rather than shown.
+function failureDetail(error: unknown): string {
+  if (typeof error === 'string') return redactSecrets(error.trim())
+  if (error instanceof Error) return redactSecrets(error.message.trim())
+  return ''
+}
+
+function describeFailure(baseMessage: string, error: unknown): string {
+  const detail = failureDetail(error)
+
+  return detail === '' ? baseMessage : `${baseMessage} ${detail}`
+}
+
 async function testAndReport<T>(
   auth: T,
   testFn: (auth: T) => Promise<ApiResult>,
@@ -143,7 +160,7 @@ async function testAndReport<T>(
     action.stop('✓ successful')
   } else {
     action.stop('✗ failed')
-    errorFn('Authentication is invalid. Please check your credentials.')
+    errorFn(describeFailure('Authentication is invalid. Please check your credentials.', result.error))
   }
 
   return result
@@ -332,7 +349,7 @@ export function createAuthTestCommand<T = AuthConfig>(options: AuthCommandOption
         this.log(`Successful connection to ${serviceName}`)
       } else {
         action.stop('✗ failed')
-        this.error(`Failed to connect to ${serviceName}.`)
+        this.error(describeFailure(`Failed to connect to ${serviceName}.`, result.error))
       }
 
       return result
