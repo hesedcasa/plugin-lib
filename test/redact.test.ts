@@ -29,6 +29,10 @@ describe('redactSecrets', () => {
     it('redacts a quoted header inside a JSON body without breaking its shape', () => {
       expect(redactSecrets('{"authorization":"Bearer abc123"}')).to.equal('{"authorization":"[REDACTED]"}')
     })
+
+    it('takes a quoted credential with the scheme in front of it', () => {
+      expect(redactSecrets('Authorization: Token "abcdef"')).to.equal('Authorization: [REDACTED]')
+    })
   })
 
   describe('bare auth schemes', () => {
@@ -41,12 +45,27 @@ describe('redactSecrets', () => {
       expect(redactSecrets('Negotiate YII5gAYGKwYBBQUC')).to.equal('Negotiate [REDACTED]')
     })
 
+    it('redacts a quoted credential without breaking its quoting', () => {
+      expect(redactSecrets('Token "abcdef"')).to.equal('Token "[REDACTED]"')
+      expect(redactSecrets("Token 'abcdef'")).to.equal("Token '[REDACTED]'")
+    })
+
+    // A lowercase-only credential carries no digit, capital or base64
+    // punctuation to tell it apart from a word, so length and the prose list
+    // are all there is to go on.
+    it('redacts a credential that is all lowercase letters', () => {
+      expect(redactSecrets('upstream rejected Token abcdefgh')).to.equal('upstream rejected Token [REDACTED]')
+      expect(redactSecrets('Bearer abcdefgh')).to.equal('Bearer [REDACTED]')
+    })
+
     it('leaves prose that happens to start with a scheme word alone', () => {
       expect(redactSecrets('Basic authentication failed')).to.equal('Basic authentication failed')
       expect(redactSecrets('Token expired')).to.equal('Token expired')
       expect(redactSecrets('Token expired.')).to.equal('Token expired.')
       expect(redactSecrets('Token is invalid')).to.equal('Token is invalid')
       expect(redactSecrets('Digest realm="api"')).to.equal('Digest realm="api"')
+      expect(redactSecrets('Bearer tokens are not supported')).to.equal('Bearer tokens are not supported')
+      expect(redactSecrets('HMAC signature mismatch')).to.equal('HMAC signature mismatch')
     })
   })
 

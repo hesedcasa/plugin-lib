@@ -27,14 +27,19 @@ const URL_USERINFO_PATTERN = /\b([a-z][\w+.-]*:\/\/)([^\s/?#]*)@/gi
 // ("Authorization: prod-secret is expired" reads the same either way), and
 // guessing wrong would leave the credential in place, so the scheme is not kept.
 const AUTH_HEADER_PATTERN = new RegExp(
-  String.raw`(["']?)(authorization)\1(\s*[:=]\s*)(${QUOTED}|[^\s"',;]+(?:\s+[^\s"',;]+)?)`,
+  String.raw`(["']?)(authorization)\1(\s*[:=]\s*)(${QUOTED}|[^\s"',;]+(?:\s+(?:${QUOTED}|[^\s"',;]+))?)`,
   'gi',
 )
 
 // A scheme and its credential can also appear with no header name in front.
 // Which of those two the following word is cannot be settled by the regex, so
-// the pattern casts wide and isCredentialShaped decides.
-const BARE_AUTH_SCHEME_PATTERN = /\b(Bearer|Basic|Token|Digest|HMAC|Negotiate|ApiKey)\s+([^\s"',;]+)/gi
+// the pattern casts wide and isCredentialShaped decides. The credential may be
+// quoted — `Token "abcdef"` in a serialised header — so QUOTED comes first,
+// before the unquoted run that would otherwise stop dead at the opening quote.
+const BARE_AUTH_SCHEME_PATTERN = new RegExp(
+  String.raw`\b(Bearer|Basic|Token|Digest|HMAC|Negotiate|ApiKey)\s+(${QUOTED}|[^\s"',;]+)`,
+  'gi',
+)
 
 // The [\w-]* prefix lets a bare keyword match as the tail of a compound key
 // (access_token, clientSecret), since \b never fires between an underscore and a
@@ -51,6 +56,9 @@ const CREDENTIAL_PARAM_PATTERN = new RegExp(
 const PROSE_AFTER_SCHEME = new Set([
   'auth',
   'authentication',
+  'authorization',
+  'challenge',
+  'credential',
   'credentials',
   'empty',
   'error',
@@ -61,27 +69,37 @@ const PROSE_AFTER_SCHEME = new Set([
   'invalid',
   'is',
   'malformed',
+  'mismatch',
   'missing',
   'not',
   'realm',
   'refresh',
   'rejected',
   'required',
+  'response',
   'revoked',
+  'scheme',
   'scope',
+  'signature',
+  'supported',
   'token',
+  'tokens',
   'unknown',
+  'unsupported',
   'was',
 ])
 
-// Credentials are long and carry a digit, a capital, or base64/URL punctuation.
-// A short all-lowercase word is prose. This errs towards masking: a credential
-// left in place is worse than a mangled sentence.
+// Anything long enough that is not a known prose word is treated as a
+// credential. Requiring a digit, a capital or base64/URL punctuation as well
+// would read an all-lowercase secret — `Token abcdefgh` — as a word and leave
+// it in the clear, and a credential left in place is worse than a mangled
+// sentence. The prose list is what keeps ordinary error text intact; a word
+// missing from it costs a censored word, not a leak.
 function isCredentialShaped(value: string): boolean {
   const word = value.replaceAll(/^\W+|\W+$/g, '').toLowerCase()
   if (PROSE_AFTER_SCHEME.has(word)) return false
 
-  return value.length >= 6 && /[\dA-Z._~+/=-]/.test(value)
+  return value.length >= 6
 }
 
 // Replacing a quoted value with a bare censor would leave the surrounding JSON
@@ -111,10 +129,11 @@ export function redactSecrets(text: string): string {
       return `${keyQuote}${key}${keyQuote}${separator}${quote}${CENSOR}${quote}`
     })
     .replaceAll(BARE_AUTH_SCHEME_PATTERN, (...groups: string[]) => {
-      const [match, scheme, credential] = groups
-      if (isMasked(credential) || !isCredentialShaped(credential)) return match
+      const [match, scheme, raw] = groups
+      const {inner, quote} = splitQuote(raw)
+      if (isMasked(inner) || !isCredentialShaped(inner)) return match
 
-      return `${scheme} ${CENSOR}`
+      return `${scheme} ${quote}${CENSOR}${quote}`
     })
     .replaceAll(CREDENTIAL_PARAM_PATTERN, (...groups: string[]) => {
       const [match, keyQuote, key, separator, raw] = groups
