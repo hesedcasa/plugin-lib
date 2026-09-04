@@ -136,10 +136,22 @@ function profileSuffix(name: string, prep: 'as' | 'for'): string {
 // in terminal output, CI logs, and --json responses, redact anything that looks
 // like a credential before it is ever appended to a user-facing message.
 const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)\s+\S+/gi
-const CREDENTIAL_PARAM_PATTERN = /\b(api[_-]?key|token|password|secret)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi
+// The leading [\w-]* lets a bare keyword also match as the tail of a compound
+// key (access_token, clientSecret, refresh_token), since \b never fires between
+// an underscore and a letter. The value stops at the separators that end a
+// query parameter or a quoted field so surrounding context survives.
+const CREDENTIAL_PARAM_PATTERN =
+  /\b([\w-]*(?:api[_-]?key|token|secret|password|passwd|pwd|credentials?))\s*[:=]\s*("[^"]*"|'[^']*'|[^\s"'&,;)\]}]+)/gi
+// scheme://user:password@host — the user is a useful diagnostic, the password
+// never is. A userinfo with no colon is a bare token, so all of it goes.
+const URL_USERINFO_PATTERN = /\b([a-z][\w+.-]*:\/\/)([^\s/?#@]*)@/gi
 
 function redactSecrets(value: string): string {
   return value
+    .replaceAll(URL_USERINFO_PATTERN, (_match, scheme: string, userinfo: string) => {
+      const separator = userinfo.indexOf(':')
+      return separator === -1 ? `${scheme}[REDACTED]@` : `${scheme}${userinfo.slice(0, separator)}:[REDACTED]@`
+    })
     .replaceAll(AUTH_SCHEME_PATTERN, '$1 [REDACTED]')
     .replaceAll(CREDENTIAL_PARAM_PATTERN, '$1=[REDACTED]')
 }

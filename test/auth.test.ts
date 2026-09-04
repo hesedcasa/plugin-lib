@@ -179,6 +179,112 @@ describe('auth commands', () => {
       }
     })
 
+    it('redacts the password from a credential-bearing URL', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox
+        .stub()
+        .resolves({error: new Error('connect failed: https://alice:supersecret@example.test/path'), success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.not.include('supersecret')
+        expect((error as Error).message).to.include('https://alice:[REDACTED]@example.test/path')
+      }
+    })
+
+    it('redacts a bare token used as URL userinfo', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({error: 'https://ghp_secretvalue@github.test/x', success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.not.include('ghp_secretvalue')
+        expect((error as Error).message).to.include('https://[REDACTED]@github.test/x')
+      }
+    })
+
+    it('redacts compound credential keys', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({
+        error: 'denied: access_token=at-value refresh_token=rt-value clientSecret: "cs-value"',
+        success: false,
+      })
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        const {message} = error as Error
+        expect(message).to.not.include('at-value')
+        expect(message).to.not.include('rt-value')
+        expect(message).to.not.include('cs-value')
+        expect(message).to.include('access_token=[REDACTED]')
+        expect(message).to.include('refresh_token=[REDACTED]')
+        expect(message).to.include('clientSecret=[REDACTED]')
+      }
+    })
+
+    it('redacts the detail reported through the --json error path', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox
+        .stub()
+        .resolves({error: new Error('rejected Authorization: Bearer secret-token'), success: false})
+
+      // --json prints the serialized error rather than rejecting, so the
+      // redaction has to be asserted on what actually reaches stdout.
+      const chunks: string[] = []
+      const write = sandbox.stub(process.stdout, 'write').callsFake((chunk: unknown) => {
+        chunks.push(String(chunk))
+        return true
+      })
+
+      await run(createAuthTestCommand(makeOptions({testConnection})), ['--json'])
+      write.restore()
+
+      const output = chunks.join('')
+      expect(output).to.include('"error"')
+      expect(output).to.not.include('secret-token')
+      expect(output).to.include('Bearer [REDACTED]')
+    })
+
+    it('keeps a non-credential detail intact', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox
+        .stub()
+        .resolves({
+          error: 'connect ECONNREFUSED 127.0.0.1:3306 while reaching https://db.example.test/health',
+          success: false,
+        })
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('ECONNREFUSED 127.0.0.1:3306')
+        expect((error as Error).message).to.include('https://db.example.test/health')
+        expect((error as Error).message).to.not.include('[REDACTED]')
+      }
+    })
+
     it('keeps the generic message when no detail is reported', async () => {
       await fs.outputJSON(configFilePath(), {
         profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
