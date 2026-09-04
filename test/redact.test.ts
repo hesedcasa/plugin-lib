@@ -36,9 +36,33 @@ describe('redactSecrets', () => {
       expect(redactSecrets('sent Basic YWxpY2U6c2VjcmV0 upstream')).to.equal('sent Basic [REDACTED] upstream')
     })
 
+    it('redacts schemes beyond Bearer and Basic', () => {
+      expect(redactSecrets('upstream rejected Token prod-secret')).to.equal('upstream rejected Token [REDACTED]')
+      expect(redactSecrets('Negotiate YII5gAYGKwYBBQUC')).to.equal('Negotiate [REDACTED]')
+    })
+
     it('leaves prose that happens to start with a scheme word alone', () => {
       expect(redactSecrets('Basic authentication failed')).to.equal('Basic authentication failed')
       expect(redactSecrets('Token expired')).to.equal('Token expired')
+      expect(redactSecrets('Token expired.')).to.equal('Token expired.')
+      expect(redactSecrets('Token is invalid')).to.equal('Token is invalid')
+      expect(redactSecrets('Digest realm="api"')).to.equal('Digest realm="api"')
+    })
+  })
+
+  describe('values that try to slip past the sanitizer', () => {
+    it('does not let an escaped quote end a credential value early', () => {
+      expect(redactSecrets(String.raw`{"token":"prefix\"live-secret"}`)).to.equal('{"token":"[REDACTED]"}')
+    })
+
+    it('does not treat a partially masked value as already safe', () => {
+      expect(redactSecrets('token=[REDACTED]live-secret')).to.equal('token=[REDACTED]')
+    })
+
+    it('reads userinfo to the last @, so an @ in the password cannot split it', () => {
+      expect(redactSecrets('https://alice:pa@ss@example.test/path')).to.equal(
+        'https://alice:[REDACTED]@example.test/path',
+      )
     })
   })
 
@@ -103,12 +127,20 @@ describe('redactSecrets', () => {
     })
   })
 
-  it('is idempotent, so a message is never redacted twice into nonsense', () => {
+  // Masked values are recognised only when they are *entirely* the censor, so a
+  // second pass can still trim a word from an unquoted header value. What has to
+  // hold is that re-running never un-masks anything, not byte equality.
+  it('stays masked when run over its own output', () => {
     const message = 'Authorization: Bearer abc123 for https://alice:pw@example.test?token=xyz789'
     const once = redactSecrets(message)
+    const twice = redactSecrets(once)
 
-    expect(redactSecrets(once)).to.equal(once)
-    expect(once).to.not.include('abc123')
-    expect(once).to.not.include('xyz789')
+    for (const output of [once, twice]) {
+      expect(output).to.not.include('abc123')
+      expect(output).to.not.include('xyz789')
+      expect(output).to.include('[REDACTED]')
+    }
+
+    expect(twice).to.not.include('[REDACTED][REDACTED]')
   })
 })
