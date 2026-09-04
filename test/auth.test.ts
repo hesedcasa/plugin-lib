@@ -141,6 +141,44 @@ describe('auth commands', () => {
       }
     })
 
+    it('redacts a bearer token embedded in the reported error', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox
+        .stub()
+        .resolves({error: new Error('upstream rejected Authorization: Bearer secret-token'), success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.not.include('secret-token')
+        expect((error as Error).message).to.include('Bearer [REDACTED]')
+      }
+    })
+
+    it('redacts credential-shaped key/value pairs in the reported error', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox
+        .stub()
+        .resolves({error: 'request failed: password=hunter2 apiKey: "abc123"', success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.not.include('hunter2')
+        expect((error as Error).message).to.not.include('abc123')
+        expect((error as Error).message).to.include('password=[REDACTED]')
+        expect((error as Error).message).to.include('apiKey=[REDACTED]')
+      }
+    })
+
     it('keeps the generic message when no detail is reported', async () => {
       await fs.outputJSON(configFilePath(), {
         profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},

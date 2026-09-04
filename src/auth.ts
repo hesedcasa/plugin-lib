@@ -130,13 +130,27 @@ function profileSuffix(name: string, prep: 'as' | 'for'): string {
   return name === 'default' ? '' : ` ${prep} '${name}'`
 }
 
+// testConnection is implemented by the consuming plugin and often just forwards
+// an HTTP client's error message verbatim; those can embed the Authorization
+// header or other credentials from the failed request. Since this text ends up
+// in terminal output, CI logs, and --json responses, redact anything that looks
+// like a credential before it is ever appended to a user-facing message.
+const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)\s+\S+/gi
+const CREDENTIAL_PARAM_PATTERN = /\b(api[_-]?key|token|password|secret)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi
+
+function redactSecrets(value: string): string {
+  return value
+    .replaceAll(AUTH_SCHEME_PATTERN, '$1 [REDACTED]')
+    .replaceAll(CREDENTIAL_PARAM_PATTERN, '$1=[REDACTED]')
+}
+
 // A generic failure message tells the user nothing they can act on, so the
 // detail the testConnection implementation reported is appended when there is
 // one. Values that would stringify to something useless (a plain object, say)
 // are dropped rather than shown.
 function failureDetail(error: unknown): string {
-  if (typeof error === 'string') return error.trim()
-  if (error instanceof Error) return error.message.trim()
+  if (typeof error === 'string') return redactSecrets(error.trim())
+  if (error instanceof Error) return redactSecrets(error.message.trim())
   return ''
 }
 
