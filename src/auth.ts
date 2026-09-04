@@ -4,6 +4,7 @@ import {action} from '@oclif/core/ux'
 
 import {type ApiResult} from './api.js'
 import {type AuthConfig, createProfileManager, type Profiles} from './config.js'
+import {redactSecrets} from './redact.js'
 
 export type FieldDef = {
   char?:
@@ -128,32 +129,6 @@ async function collectAuthFields(
 
 function profileSuffix(name: string, prep: 'as' | 'for'): string {
   return name === 'default' ? '' : ` ${prep} '${name}'`
-}
-
-// testConnection is implemented by the consuming plugin and often just forwards
-// an HTTP client's error message verbatim; those can embed the Authorization
-// header or other credentials from the failed request. Since this text ends up
-// in terminal output, CI logs, and --json responses, redact anything that looks
-// like a credential before it is ever appended to a user-facing message.
-const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic)\s+\S+/gi
-// The leading [\w-]* lets a bare keyword also match as the tail of a compound
-// key (access_token, clientSecret, refresh_token), since \b never fires between
-// an underscore and a letter. The value stops at the separators that end a
-// query parameter or a quoted field so surrounding context survives.
-const CREDENTIAL_PARAM_PATTERN =
-  /\b([\w-]*(?:api[_-]?key|token|secret|password|passwd|pwd|credentials?))\s*[:=]\s*("[^"]*"|'[^']*'|[^\s"'&,;)\]}]+)/gi
-// scheme://user:password@host — the user is a useful diagnostic, the password
-// never is. A userinfo with no colon is a bare token, so all of it goes.
-const URL_USERINFO_PATTERN = /\b([a-z][\w+.-]*:\/\/)([^\s/?#@]*)@/gi
-
-function redactSecrets(value: string): string {
-  return value
-    .replaceAll(URL_USERINFO_PATTERN, (_match, scheme: string, userinfo: string) => {
-      const separator = userinfo.indexOf(':')
-      return separator === -1 ? `${scheme}[REDACTED]@` : `${scheme}${userinfo.slice(0, separator)}:[REDACTED]@`
-    })
-    .replaceAll(AUTH_SCHEME_PATTERN, '$1 [REDACTED]')
-    .replaceAll(CREDENTIAL_PARAM_PATTERN, '$1=[REDACTED]')
 }
 
 // A generic failure message tells the user nothing they can act on, so the
