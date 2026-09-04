@@ -15,7 +15,10 @@ import {
 
 // Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
 // This helper isolates the one necessary cast so call sites stay readable.
-const run = (Cls: ReturnType<typeof createAuthDeleteCommand | typeof createAuthTestCommand>, argv: string[] = []) =>
+const run = (
+  Cls: ReturnType<typeof createAuthAddCommand | typeof createAuthDeleteCommand | typeof createAuthTestCommand>,
+  argv: string[] = [],
+) =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (Cls as any).run(argv, import.meta.url)
 
@@ -107,6 +110,66 @@ describe('auth commands', () => {
       }
     })
 
+    it('surfaces the reported error alongside the generic failure message', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({error: "Access denied for user 'root'", success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('Failed to connect')
+        expect((error as Error).message).to.include("Access denied for user 'root'")
+      }
+    })
+
+    it('surfaces the message of a reported Error instance', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({error: new Error('ECONNREFUSED 127.0.0.1:3306'), success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('ECONNREFUSED 127.0.0.1:3306')
+      }
+    })
+
+    it('keeps the generic message when no detail is reported', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection: sandbox.stub().resolves({success: false})})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.equal('Failed to connect to TestService.')
+      }
+    })
+
+    it('does not stringify an unusable error value into the message', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'mytoken', host: 'https://api.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({error: {code: 500}, success: false})
+
+      try {
+        await run(createAuthTestCommand(makeOptions({testConnection})))
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.equal('Failed to connect to TestService.')
+        expect((error as Error).message).to.not.include('object Object')
+      }
+    })
+
     it('uses the named profile when --profile flag is given', async () => {
       await fs.outputJSON(configFilePath(), {
         profiles: {
@@ -136,6 +199,33 @@ describe('auth commands', () => {
         // readConfig logs "Profile 'nonexistent' not found" then returns undefined;
         // the command converts any undefined config into this error.
         expect((error as Error).message).to.include('Missing authentication config')
+      }
+    })
+  })
+
+  describe('createAuthAddCommand', () => {
+    const addArgv = ['-p', 'default', '-t', 'mytoken', '-e', 'me@example.com', '-u', 'https://api.example.com']
+
+    it('surfaces the reported error when the connection test fails', async () => {
+      const testConnection = sandbox.stub().resolves({error: "Access denied for user 'root'", success: false})
+
+      try {
+        await run(createAuthAddCommand(makeOptions({testConnection})), addArgv)
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('Authentication is invalid')
+        expect((error as Error).message).to.include("Access denied for user 'root'")
+      }
+    })
+
+    it('keeps the generic message when no detail is reported', async () => {
+      const testConnection = sandbox.stub().resolves({success: false})
+
+      try {
+        await run(createAuthAddCommand(makeOptions({testConnection})), addArgv)
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.equal('Authentication is invalid. Please check your credentials.')
       }
     })
   })
