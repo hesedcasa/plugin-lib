@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/hesedcasa/plugin-lib/compare/v0.13.0...v0.13.1) (2026-11-18)
+
+
+### 🛠️ Fixes
+
+* fix publish on tag ([fcd0046](https://github.com/hesedcasa/plugin-lib/commit/fcd0046dcec7d04215287c8c11d6a99a4b42a6ff))
+
 ## [0.13.0](https://github.com/hesedcasa/plugin-lib/compare/v0.12.3...v0.13.0) (2026-11-18)
 
 
