@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/hesedcasa/plugin-lib/compare/v0.12.3...v0.13.0) (2026-11-18)
+
+
+### 🎉 Features
+
+* **auth:** add opt-in defaultHost for legacy host flag ([#112](https://github.com/hesedcasa/plugin-lib/issues/112)) ([195db21](https://github.com/hesedcasa/plugin-lib/commit/195db21ae5671467640269236cfcd9f22bec157d))
+
 ## [0.12.3](https://github.com/hesedcasa/plugin-lib/compare/v0.12.2...v0.12.3) (2026-09-04)
 
 
