@@ -3,7 +3,7 @@ name: publish-on-tag
 on:
   push:
     tags:
-      - 'plugin-lib-v*'
+      - 'v*'
   workflow_dispatch:
     inputs:
       npm-publish:
