@@ -1,3 +1,4 @@
+import {Command} from '@oclif/core'
 import {assert, expect} from 'chai'
 import fs from 'fs-extra'
 import os from 'node:os'
@@ -22,6 +23,12 @@ const run = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (Cls as any).run(argv, import.meta.url)
 
+// Dynamic flag definitions are attached to the returned class but `typeof Command`
+// typing hides per-field access, so inspect requiredness through a narrow cast.
+const flagRequired = (Cls: ReturnType<typeof createAuthAddCommand>, name: string): boolean | undefined =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (Cls.flags as any)[name]?.required
+
 describe('auth commands', () => {
   const sandbox = createSandbox()
   let tmpDir: string
@@ -39,6 +46,28 @@ describe('auth commands', () => {
       serviceName: 'TestService',
       testConnection: sandbox.stub().resolves({success: true}),
       ...overrides,
+    }
+  }
+
+  // Simulates flags the command collected without going through the parser
+  // (the interactive path): the stub receives complete flags, deliberately
+  // omitting `host` when a test resolves the host through command logic.
+  function stubParseFlags(flags: Record<string, unknown>): void {
+    // `parse` is protected on oclif's Command; cast the prototype to stub the
+    // runtime method anyway.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stub: any = sandbox.stub(Command.prototype as any, 'parse')
+    stub.resolves({args: {}, flags})
+  }
+
+  // Requiredness is captured at factory creation, so the TTY state has to be
+  // set before constructing and restored before running (update confirmation).
+  function withTtyDuring<T>(fn: () => T): T {
+    Object.defineProperty(process.stdout, 'isTTY', {configurable: true, value: true, writable: true})
+    try {
+      return fn()
+    } finally {
+      Object.defineProperty(process.stdout, 'isTTY', {configurable: true, value: false, writable: true})
     }
   }
 
@@ -294,17 +323,335 @@ describe('auth commands', () => {
         expect((error as Error).message).to.equal('Authentication is invalid. Please check your credentials.')
       }
     })
+
+    describe('with defaultHost', () => {
+      const addWithoutHostArgv = ['-p', 'default', '-t', 'mytoken', '-e', 'me@example.com']
+
+      it('stores and tests the configured default host when -u is omitted', async () => {
+        const testConnection = sandbox.stub().resolves({success: true})
+        await run(
+          createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})),
+          addWithoutHostArgv,
+        )
+
+        const expected = {apiToken: 'mytoken', email: 'me@example.com', host: 'https://bitbucket.org'}
+        const config = await fs.readJSON(configFilePath())
+        expect(config.profiles.default).to.deep.equal(expected)
+        expect(testConnection.calledOnce).to.be.true
+        expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
+      })
+
+      it('stores and tests an explicit -u instead of the default', async () => {
+        const testConnection = sandbox.stub().resolves({success: true})
+        await run(createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})), [
+          ...addWithoutHostArgv,
+          '-u',
+          'https://custom.example.test',
+        ])
+
+        const expected = {apiToken: 'mytoken', email: 'me@example.com', host: 'https://custom.example.test'}
+        const config = await fs.readJSON(configFilePath())
+        expect(config.profiles.default).to.deep.equal(expected)
+        expect(testConnection.calledOnce).to.be.true
+        expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
+      })
+
+      it('uses whichever default is configured, not a hardcoded URL', async () => {
+        const testConnection = sandbox.stub().resolves({success: true})
+        await run(
+          createAuthAddCommand(makeOptions({defaultHost: 'https://other.example.test', testConnection})),
+          addWithoutHostArgv,
+        )
+
+        const config = await fs.readJSON(configFilePath())
+        expect(config.profiles.default.host).to.equal('https://other.example.test')
+        expect(testConnection.firstCall.args[0]).to.deep.include({host: 'https://other.example.test'})
+      })
+
+      it('still rejects an omitted -u without a defaultHost configuration', async () => {
+        const testConnection = sandbox.stub().resolves({success: true})
+
+        try {
+          await run(createAuthAddCommand(makeOptions({testConnection})), addWithoutHostArgv)
+          assert.fail('should have thrown')
+        } catch (error) {
+          expect((error as Error).message).to.include('Missing required flag host')
+          expect((error as Error).message).to.not.equal('Operation canceled!')
+        }
+
+        expect(await fs.pathExists(configFilePath())).to.be.false
+        expect(testConnection.called).to.be.false
+      })
+    })
+  })
+
+  describe('createAuthUpdateCommand', () => {
+    const updateArgv = ['-p', 'default', '-t', 'newtoken', '-e', 'new@example.com']
+
+    it('preserves the stored host when -u is omitted and defaultHost is configured', async () => {
+      await fs.outputJSON(configFilePath(), {
+        defaultProfile: 'default',
+        profiles: {
+          default: {apiToken: 'oldtoken', email: 'old@example.com', host: 'https://stored.example.com'},
+          other: {apiToken: 'othertoken', host: 'https://other.example.com'},
+        },
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+      await run(
+        createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})),
+        updateArgv,
+      )
+
+      const expectedDefault = {apiToken: 'newtoken', email: 'new@example.com', host: 'https://stored.example.com'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.defaultProfile).to.equal('default')
+      expect(config.profiles.other).to.deep.equal({apiToken: 'othertoken', host: 'https://other.example.com'})
+      expect(config.profiles.default).to.deep.equal(expectedDefault)
+      expect(testConnection.calledOnce).to.be.true
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expectedDefault)
+    })
+
+    it('falls back to the configured default when the stored profile has no host', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'oldtoken', email: 'old@example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+      await run(createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})), [
+        ...updateArgv,
+      ])
+
+      const expectedDefault = {apiToken: 'newtoken', email: 'new@example.com', host: 'https://bitbucket.org'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expectedDefault)
+      expect(testConnection.calledOnce).to.be.true
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expectedDefault)
+    })
+
+    it('overwrites the stored host with an explicit -u', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {apiToken: 'oldtoken', host: 'https://stored.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+      await run(createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})), [
+        ...updateArgv,
+        '-u',
+        'https://custom.example.test',
+      ])
+
+      const expectedDefault = {apiToken: 'newtoken', email: 'new@example.com', host: 'https://custom.example.test'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expectedDefault)
+      expect(testConnection.calledOnce).to.be.true
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expectedDefault)
+    })
+
+    it('still requires -u without defaultHost even when a stored host exists', async () => {
+      const seeded = {
+        defaultProfile: 'default',
+        profiles: {default: {apiToken: 'oldtoken', host: 'https://stored.example.com'}},
+      }
+      await fs.outputJSON(configFilePath(), seeded)
+
+      const testConnection = sandbox.stub().resolves({success: true})
+
+      try {
+        await run(createAuthUpdateCommand(makeOptions({testConnection})), [...updateArgv])
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('Missing required flag host')
+        expect((error as Error).message).to.not.equal('Operation canceled!')
+      }
+
+      const config = await fs.readJSON(configFilePath())
+      expect(config).to.deep.equal(seeded)
+      expect(testConnection.called).to.be.false
+    })
   })
 
   describe('auth field command factories', () => {
-    it('do not mutate shared fields when creating add and update commands', () => {
+    it('do not mutate shared fields or factory options when creating add and update commands', () => {
       const fields: FieldDef[] = [{description: 'API Token', name: 'apiToken', required: true, type: 'string'}]
-      const options = makeOptions({fields})
+      const options = makeOptions({defaultHost: 'https://bitbucket.org', fields})
 
       createAuthAddCommand(options)
       createAuthUpdateCommand(options)
 
       expect(fields).to.deep.equal([{description: 'API Token', name: 'apiToken', required: true, type: 'string'}])
+      expect(options).to.deep.equal({
+        clearClients: options.clearClients,
+        defaultHost: 'https://bitbucket.org',
+        fields,
+        serviceName: 'TestService',
+        testConnection: options.testConnection,
+      })
+    })
+  })
+
+  describe('legacy host flag definitions', () => {
+    // beforeEach pins stdout to non-TTY, matching how sibling CLIs build
+    // their flags in CI: everything required.
+    it('make the legacy host flag optional only when defaultHost is configured (add)', () => {
+      const withDefault = createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org'}))
+      expect(flagRequired(withDefault, 'profile')).to.be.true
+      expect(flagRequired(withDefault, 'apiToken')).to.be.true
+      expect(flagRequired(withDefault, 'email')).to.be.true
+      expect(flagRequired(withDefault, 'host')).to.be.false
+
+      const withoutDefault = createAuthAddCommand(makeOptions())
+      expect(flagRequired(withoutDefault, 'profile')).to.be.true
+      expect(flagRequired(withoutDefault, 'host')).to.be.true
+    })
+
+    it('make the legacy host flag optional only when defaultHost is configured (update)', () => {
+      const withDefault = createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org'}))
+      expect(flagRequired(withDefault, 'host')).to.be.false
+
+      const withoutDefault = createAuthUpdateCommand(makeOptions())
+      expect(flagRequired(withoutDefault, 'host')).to.be.true
+    })
+  })
+
+  describe('interactive flag collection', () => {
+    it('add uses the configured default when flags are collected without a host', async () => {
+      const testConnection = sandbox.stub().resolves({success: true})
+      const cls = withTtyDuring(() =>
+        createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})),
+      )
+      // TTY definitions are all optional; the host resolution below is
+      // unconditional on TTY because stdout is non-TTY while running.
+      expect(flagRequired(cls, 'profile')).to.be.false
+      expect(flagRequired(cls, 'host')).to.be.false
+
+      stubParseFlags({apiToken: 'mytoken', email: 'me@example.com', profile: 'default'})
+      await run(cls)
+
+      const expected = {apiToken: 'mytoken', email: 'me@example.com', host: 'https://bitbucket.org'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expected)
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
+    })
+
+    it('update preserves the existing host when flags are collected without a host', async () => {
+      await fs.outputJSON(configFilePath(), {
+        defaultProfile: 'default',
+        profiles: {default: {apiToken: 'oldtoken', email: 'old@example.com', host: 'https://stored.example.com'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+      const cls = withTtyDuring(() =>
+        createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org', testConnection})),
+      )
+
+      stubParseFlags({apiToken: 'newtoken', email: 'new@example.com', profile: 'default'})
+      await run(cls)
+
+      const expected = {apiToken: 'newtoken', email: 'new@example.com', host: 'https://stored.example.com'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expected)
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
+    })
+  })
+
+  describe('custom fields alongside defaultHost', () => {
+    // PostgreSQL-shaped: `host`/`-h` and `user`/`-u` mean something else, so
+    // the legacy default must not leak in and requiredness must not change.
+    const customFields: FieldDef[] = [
+      {char: 'h', description: 'Database host', name: 'host', required: true, type: 'string'},
+      {char: 'u', description: 'Database user', name: 'user', required: true, type: 'string'},
+      {char: 'w', description: 'Database password', name: 'password', required: true, type: 'string'},
+    ]
+
+    it('keeps custom host/user required for add and update', () => {
+      const add = createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields}))
+      expect(flagRequired(add, 'host')).to.be.true
+      expect(flagRequired(add, 'user')).to.be.true
+      expect(flagRequired(add, 'password')).to.be.true
+
+      const update = createAuthUpdateCommand(makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields}))
+      expect(flagRequired(update, 'host')).to.be.true
+      expect(flagRequired(update, 'user')).to.be.true
+    })
+
+    it('rejects omitted custom host/user on add without injecting the legacy default', async () => {
+      const testConnection = sandbox.stub().resolves({success: true})
+
+      try {
+        await run(
+          createAuthAddCommand(
+            makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields, testConnection}),
+          ),
+          ['-w', 'secret'],
+        )
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('Missing required flag host')
+        expect((error as Error).message).to.include('Missing required flag user')
+      }
+
+      expect(await fs.pathExists(configFilePath())).to.be.false
+      expect(testConnection.called).to.be.false
+    })
+
+    it('stores explicit custom values on add unchanged with no injected legacy fields', async () => {
+      const testConnection = sandbox.stub().resolves({success: true})
+      await run(
+        createAuthAddCommand(makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields, testConnection})),
+        ['-p', 'default', '-h', 'db.example.test', '-u', 'dbuser', '-w', 'secret'],
+      )
+
+      const expected = {host: 'db.example.test', password: 'secret', user: 'dbuser'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expected)
+      expect(testConnection.calledOnce).to.be.true
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
+    })
+
+    it('rejects omitted custom host/user on update without injecting the legacy default', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {host: 'db.example.test', password: 'old', user: 'dbuser'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+
+      try {
+        await run(
+          createAuthUpdateCommand(
+            makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields, testConnection}),
+          ),
+          ['-w', 'newsecret'],
+        )
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.include('Missing required flag host')
+        expect((error as Error).message).to.include('Missing required flag user')
+      }
+
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal({host: 'db.example.test', password: 'old', user: 'dbuser'})
+      expect(testConnection.called).to.be.false
+    })
+
+    it('stores explicit custom values on update unchanged with no injected legacy fields', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {default: {host: 'db.example.test', password: 'old', user: 'dbuser'}},
+      })
+
+      const testConnection = sandbox.stub().resolves({success: true})
+      await run(
+        createAuthUpdateCommand(
+          makeOptions({defaultHost: 'https://bitbucket.org', fields: customFields, testConnection}),
+        ),
+        ['-p', 'default', '-h', 'db2.example.test', '-u', 'dbuser2', '-w', 'newsecret'],
+      )
+
+      const expected = {host: 'db2.example.test', password: 'newsecret', user: 'dbuser2'}
+      const config = await fs.readJSON(configFilePath())
+      expect(config.profiles.default).to.deep.equal(expected)
+      expect(testConnection.calledOnce).to.be.true
+      expect(testConnection.firstCall.args[0]).to.deep.equal(expected)
     })
   })
 

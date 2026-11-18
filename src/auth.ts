@@ -44,16 +44,28 @@ export type FieldDef = {
 export type AuthCommandOptions<T = AuthConfig> = {
   clearClients: () => void
   configFile?: string
+  /**
+   * Default value for the built-in legacy `host`/`-u` field when `-u` is
+   * omitted. Applies only when `fields` is omitted (i.e. the legacy schema is
+   * used): `auth add` stores this host, and `auth update` falls back to it
+   * only when the stored profile has none — an explicit `-u` always wins.
+   * Consumers with a custom `fields` array, or without this option, keep the
+   * previous required-host behavior.
+   */
+  defaultHost?: string
   fields?: FieldDef[]
   serviceName: string
   testConnection: (auth: T) => Promise<ApiResult>
 }
 
-function buildDynamicFlags(fields: FieldDef[]): Record<string, unknown> {
+function buildDynamicFlags(fields: FieldDef[], isLegacyHostOptional = false): Record<string, unknown> {
   const result: Record<string, unknown> = {}
 
   for (const {char, description, name, type} of fields) {
-    const base = {char, description, required: !process.stdout.isTTY}
+    // The opt-in default only relaxes the built-in legacy host field; custom
+    // schemas may use `host`/`-u` for other purposes and are never relaxed.
+    const isLegacyHost = isLegacyHostOptional && char === 'u' && name === 'host' && type === 'string'
+    const base = {char, description, required: isLegacyHost ? false : !process.stdout.isTTY}
     if (type === 'number') {
       result[name] = Flags.integer(base)
     } else if (type === 'boolean') {
@@ -173,8 +185,11 @@ abstract class AuthCommandBase extends Command {
 }
 
 export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
-  const {clearClients, configFile, fields, serviceName, testConnection} = options
+  const {clearClients, configFile, defaultHost, fields, serviceName, testConnection} = options
   const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
+  // The opt-in host default applies only to the built-in legacy fields; an
+  // explicit fields array opts into custom behavior and gets no legacy default.
+  const effectiveDefaultHost = fields === undefined ? defaultHost : undefined
 
   return class AuthAdd extends AuthCommandBase {
     static override args = {}
@@ -183,7 +198,7 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
     static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p prod']
     static override flags = {
       profile: Flags.string({char: 'p', description: 'Profile name', required: !process.stdout.isTTY}),
-      ...buildDynamicFlags(resolvedFields),
+      ...buildDynamicFlags(resolvedFields, effectiveDefaultHost !== undefined),
     }
 
     public async run(): Promise<ApiResult> {
@@ -203,7 +218,13 @@ export function createAuthAddCommand<T = AuthConfig>(options: AuthCommandOptions
         this.error(`Profile '${profileName}' already exists. Use '${this.config.bin} auth update' to modify it.`)
       }
 
-      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, flags)
+      // Resolve an omitted host to the configured default before collection so
+      // no host prompt fires and persistence and the connection test receive
+      // the same resolved host.
+      const collectionFlags =
+        effectiveDefaultHost === undefined ? flags : {...flags, host: flags.host ?? effectiveDefaultHost}
+
+      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, collectionFlags)
 
       await pm.saveProfiles({
         ...existingProfiles,
@@ -415,8 +436,11 @@ export function createAuthDeleteCommand(options?: {configFile?: string}): typeof
 }
 
 export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOptions<T>): typeof Command {
-  const {clearClients, configFile, fields, serviceName, testConnection} = options
+  const {clearClients, configFile, defaultHost, fields, serviceName, testConnection} = options
   const resolvedFields = fields ?? getLegacyDefaultFields(serviceName)
+  // The opt-in host default applies only to the built-in legacy fields; an
+  // explicit fields array opts into custom behavior and gets no legacy default.
+  const effectiveDefaultHost = fields === undefined ? defaultHost : undefined
 
   return class AuthUpdate extends AuthCommandBase {
     static override args = {}
@@ -425,7 +449,7 @@ export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOpti
     static override examples = ['<%= config.bin %> <%= command.id %>', '<%= config.bin %> <%= command.id %> -p test']
     static override flags = {
       profile: Flags.string({char: 'p', description: 'Profile name', required: !process.stdout.isTTY}),
-      ...buildDynamicFlags(resolvedFields),
+      ...buildDynamicFlags(resolvedFields, effectiveDefaultHost !== undefined),
     }
 
     public async run(): Promise<ApiResult | void> {
@@ -444,7 +468,16 @@ export function createAuthUpdateCommand<T = AuthConfig>(options: AuthCommandOpti
 
       const existing = allProfiles[profileName] as unknown as Record<string, boolean | number | string>
 
-      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, flags, existing)
+      // Precedence for an opted-in host: explicit -u, then the stored host,
+      // then the configured default — resolved before collection so no host
+      // prompt fires and persistence and the connection test receive the same
+      // resolved host.
+      const collectionFlags =
+        effectiveDefaultHost === undefined
+          ? flags
+          : {...flags, host: flags.host ?? existing.host ?? effectiveDefaultHost}
+
+      const auth = await collectAuthFields((msg) => this.error(msg), resolvedFields, collectionFlags, existing)
 
       if (process.stdout.isTTY) {
         const isAnswer = await confirm({message: 'Override existing config?'})
