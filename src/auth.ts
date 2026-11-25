@@ -4,7 +4,7 @@ import {action} from '@oclif/core/ux'
 
 import {type ApiResult} from './api.js'
 import {type AuthConfig, createProfileManager, type Profiles} from './config.js'
-import {redactSecrets} from './redact.js'
+import {isCredentialKey, maskValue, redactSecrets} from './redact.js'
 
 export type FieldDef = {
   char?:
@@ -275,7 +275,12 @@ export function createAuthListCommand(options?: {configFile?: string}): typeof C
         ...(name === defaultProfile && {default: true}),
         name,
         ...Object.fromEntries(
-          Object.entries(auth as unknown as Record<string, unknown>).filter(([, v]) => v !== undefined),
+          Object.entries(auth as unknown as Record<string, unknown>)
+            .filter(([, v]) => v !== undefined)
+            // Masking during the display copy keeps secrets out of both the log
+            // lines below and the `data` this command returns to the --json
+            // serializer. The stored config is never written back.
+            .map(([key, value]) => [key, isCredentialKey(key) ? maskValue(value) : value]),
         ),
       }))
 

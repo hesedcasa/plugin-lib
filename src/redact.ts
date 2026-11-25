@@ -115,6 +115,33 @@ function isMasked(inner: string): boolean {
   return inner.trim() === CENSOR
 }
 
+// Display-layer masking for list output (auth list, pgauth list). Unlike the
+// [REDACTED] censor above, it keeps the last four characters visible so a user
+// can still tell *which* credential a profile holds. Values of eight characters
+// or fewer reveal a majority, so they are masked entirely.
+const LIST_MASK = '********'
+
+export function maskValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  return value.length > 8 ? LIST_MASK + value.slice(-4) : LIST_MASK
+}
+
+// Answers "does this stored profile key look like a credential?" for list
+// display — a different contract from the parameter-text patterns above, which
+// match `key: value` sequences in free text. Those carry separator/quoting
+// context; this one is a plain case-insensitive substring test over the key. It
+// keeps the keyword family of CREDENTIAL_PARAM_PATTERN and adds bare `key`,
+// so compound names (apiKey, clientSecret, ACCESS_TOKEN) match too. Matching
+// anywhere in the key deliberately over-masks ordinary fields whose names
+// contain a credential word (keyValue, monkey): a masked non-secret is a
+// nuisance, an unmasked secret is a leak. Non-global — unlike a global regex,
+// test() stays stateless across calls.
+const CREDENTIAL_KEY_PATTERN = /token|key|secret|password|passwd|pwd|credentials?/i
+
+export function isCredentialKey(key: string): boolean {
+  return CREDENTIAL_KEY_PATTERN.test(key)
+}
+
 export function redactSecrets(text: string): string {
   return text
     .replaceAll(URL_USERINFO_PATTERN, (_match, scheme: string, userinfo: string) => {

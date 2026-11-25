@@ -9,15 +9,24 @@ import {
   type AuthCommandOptions,
   createAuthAddCommand,
   createAuthDeleteCommand,
+  createAuthListCommand,
   createAuthTestCommand,
   createAuthUpdateCommand,
   type FieldDef,
 } from '../src/auth.js'
+import authListCommand from '../src/commands/auth/list.js'
+import pgauthListCommand from '../src/commands/pgauth/list.js'
+import {infisicalHttp, vaultHttp} from '../src/secrets.js'
 
 // Factory functions return `typeof Command` (abstract) but the produced class is always concrete.
 // This helper isolates the one necessary cast so call sites stay readable.
 const run = (
-  Cls: ReturnType<typeof createAuthAddCommand | typeof createAuthDeleteCommand | typeof createAuthTestCommand>,
+  Cls: ReturnType<
+    | typeof createAuthAddCommand
+    | typeof createAuthDeleteCommand
+    | typeof createAuthListCommand
+    | typeof createAuthTestCommand
+  >,
   argv: string[] = [],
 ) =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,6 +67,24 @@ describe('auth commands', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const stub: any = sandbox.stub(Command.prototype as any, 'parse')
     stub.resolves({args: {}, flags})
+  }
+
+  // Collects everything a command prints: ux.stdout and the --json serializer
+  // both end up in process.stdout.write. The stub is restored before the
+  // caller's assertions run, even when the command throws.
+  async function withCapturedStdout<T>(fn: () => Promise<T>): Promise<{output: string; result: T}> {
+    const chunks: string[] = []
+    const write = sandbox.stub(process.stdout, 'write').callsFake((chunk: unknown) => {
+      chunks.push(String(chunk))
+      return true
+    })
+
+    try {
+      const result = await fn()
+      return {output: chunks.join(''), result}
+    } finally {
+      write.restore()
+    }
   }
 
   // Requiredness is captured at factory creation, so the TTY state has to be
@@ -296,6 +323,312 @@ describe('auth commands', () => {
         expect((error as Error).message).to.include('Missing authentication config')
       }
     })
+  })
+
+  describe('createAuthListCommand', () => {
+    // Secrets are deliberately longer than eight characters, so a leak shows up
+    // either as the whole string or as any suffix past the last four characters.
+    const listProfiles = {
+      defaultProfile: 'default',
+      profiles: {
+        default: {
+          apiToken: 'default-abcd1234efgh',
+          email: 'owner@example.test',
+          host: 'https://api.example.test',
+          port: 8443,
+          rotateKey: true,
+        },
+        work: {
+          apiKey: 'wk-9988776655',
+          host: 'https://work.example.test',
+        },
+      },
+    }
+
+    const expectedMaskedData = [
+      {
+        apiToken: '********efgh',
+        default: true,
+        email: 'owner@example.test',
+        host: 'https://api.example.test',
+        name: 'default',
+        port: 8443,
+        rotateKey: true,
+      },
+      {
+        apiKey: '********6655',
+        host: 'https://work.example.test',
+        name: 'work',
+      },
+    ]
+
+    it('masks credential values in text output and returned data', async () => {
+      await fs.outputJSON(configFilePath(), listProfiles)
+
+      const {output, result} = await withCapturedStdout(() => run(createAuthListCommand()))
+
+      expect(result).to.deep.include({success: true})
+      expect((result as {data: unknown}).data).to.deep.equal(expectedMaskedData)
+
+      expect(output).to.include('default (default):')
+      expect(output).to.include('apiToken: ********efgh')
+      expect(output).to.include('apiKey: ********6655')
+      expect(output).to.not.include('default-abcd1234efgh')
+      expect(output).to.not.include('wk-9988776655')
+    })
+
+    it('masks credential values in --json output', async () => {
+      await fs.outputJSON(configFilePath(), listProfiles)
+
+      const {output} = await withCapturedStdout(() => run(createAuthListCommand(), ['--json']))
+
+      // Parse the actual serialized output rather than trusting the return value.
+      const parsed = JSON.parse(output) as {data: unknown; success: boolean}
+      expect(parsed.success).to.be.true
+      expect(parsed.data).to.deep.equal(expectedMaskedData)
+      expect(output).to.not.include('default-abcd1234efgh')
+      expect(output).to.not.include('wk-9988776655')
+    })
+
+    it('masks every credential-shaped key, fully masking short secrets', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {
+          matrix: {
+            apiKey: 'long-api-key-value',
+            credentials: 'cred-z-9876',
+            key: 'short',
+            password: 'plain-long-password',
+            pwd: 'pw',
+            secret: 'top-secret-99',
+            token: 'abcdefghij',
+          },
+        },
+      })
+
+      const {output, result} = await withCapturedStdout(() => run(createAuthListCommand()))
+      const {data} = result as {data: Array<Record<string, unknown>>}
+
+      expect(data).to.deep.equal([
+        {
+          apiKey: '********alue',
+          credentials: '********9876',
+          key: '********',
+          name: 'matrix',
+          password: '********word',
+          pwd: '********',
+          secret: '********t-99',
+          token: '********ghij',
+        },
+      ])
+      expect(output).to.include('matrix:')
+      expect(output).to.not.include('long-api-key-value')
+      expect(output).to.not.include('plain-long-password')
+    })
+
+    it('leaves non-credential fields and non-string values untouched', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {
+          mixed: {
+            email: 'user@example.test',
+            enabled: false,
+            host: 'https://mixed.example.test',
+            keyRotationDays: 30,
+            keyValue: 'not-a-secret',
+            passwordExpiresDays: 90,
+            port: 5432,
+            sslEnabled: true,
+          },
+        },
+      })
+
+      const {output, result} = await withCapturedStdout(() => run(createAuthListCommand()))
+
+      // keyValue is ordinary but contains a credential word, so masking it is
+      // the intentional over-masking policy. Booleans and numbers under
+      // credential-shaped keys (keyRotationDays, sslEnabled,
+      // passwordExpiresDays) pass through without being stringified.
+      expect((result as {data: unknown}).data).to.deep.equal([
+        {
+          email: 'user@example.test',
+          enabled: false,
+          host: 'https://mixed.example.test',
+          keyRotationDays: 30,
+          keyValue: '********cret',
+          name: 'mixed',
+          passwordExpiresDays: 90,
+          port: 5432,
+          sslEnabled: true,
+        },
+      ])
+      expect(output).to.include('host: https://mixed.example.test')
+      expect(output).to.include('email: user@example.test')
+      expect(output).to.not.include('not-a-secret')
+    })
+
+    it('still lists a legacy {auth: {...}} config under the default profile', async () => {
+      await fs.outputJSON(configFilePath(), {
+        auth: {apiToken: 'legacy-token-9876', host: 'https://legacy.example.test'},
+      })
+
+      const {output, result} = await withCapturedStdout(() => run(createAuthListCommand()))
+
+      expect((result as {data: unknown}).data).to.deep.equal([
+        {apiToken: '********9876', default: true, host: 'https://legacy.example.test', name: 'default'},
+      ])
+      expect(output).to.include('apiToken: ********9876')
+      expect(output).to.not.include('legacy-token-9876')
+    })
+
+    it('still fails when the config has no profiles', async () => {
+      await fs.outputJSON(configFilePath(), {profiles: {}})
+
+      try {
+        await run(createAuthListCommand())
+        assert.fail('should have thrown')
+      } catch (error) {
+        expect((error as Error).message).to.equal('No authentication profiles found.')
+      }
+    })
+
+    it('still fails when no config exists', async () => {
+      try {
+        await run(createAuthListCommand())
+        assert.fail('should have thrown')
+      } catch (error) {
+        // readProfiles and getDefaultProfile race the same missing file, so
+        // either rejection message is a valid failure for an empty state.
+        expect((error as Error).message).to.match(/No authentication profiles found|Missing authentication config/)
+      }
+    })
+
+    it('masks vault: and infisical: references without resolving them', async () => {
+      await fs.outputJSON(configFilePath(), {
+        profiles: {
+          vaulted: {
+            apiToken: 'vault:secret/data/prod#apiToken',
+            password: 'infisical:app/prod',
+          },
+        },
+      })
+
+      const vaultGet = sandbox.stub(vaultHttp, 'get').rejects(new Error('auth list must not contact Vault'))
+      const infisicalGet = sandbox.stub(infisicalHttp, 'get').rejects(new Error('auth list must not contact Infisical'))
+      const infisicalPost = sandbox
+        .stub(infisicalHttp, 'post')
+        .rejects(new Error('auth list must not contact Infisical'))
+
+      const {output, result} = await withCapturedStdout(() => run(createAuthListCommand()))
+      const {data} = result as {data: Array<Record<string, unknown>>}
+
+      // The suffix comes from the raw reference string itself: readProfiles
+      // returns values unresolved and the display layer masks them as-is.
+      expect(data[0].apiToken).to.equal('********oken')
+      expect(data[0].password).to.equal('********prod')
+      expect(output).to.include('apiToken: ********oken')
+      expect(output).to.include('password: ********prod')
+      expect(output).to.not.include('vault:secret/data/prod#apiToken')
+      expect(output).to.not.include('infisical:app/prod')
+
+      expect(vaultGet.called).to.be.false
+      expect(infisicalGet.called).to.be.false
+      expect(infisicalPost.called).to.be.false
+    })
+
+    it('leaves the stored config bytes and 0o600 mode untouched', async () => {
+      const file = configFilePath()
+      const seeded = {
+        defaultProfile: 'default',
+        profiles: {default: {apiToken: 'fs-snapshot-token-42', host: 'https://fs.example.test'}},
+      }
+      await fs.outputJSON(file, seeded)
+      await fs.chmod(file, 0o600)
+
+      const before = await fs.readFile(file)
+      // eslint-disable-next-line no-bitwise -- isolating the permission bits
+      const beforeMode = (await fs.stat(file)).mode & 0o777
+
+      const text = await withCapturedStdout(() => run(createAuthListCommand()))
+      expect(text.output).to.include('apiToken: ********n-42')
+      expect(text.output).to.not.include('fs-snapshot-token-42')
+
+      const json = await withCapturedStdout(() => run(createAuthListCommand(), ['--json']))
+      expect(json.output).to.not.include('fs-snapshot-token-42')
+
+      expect((await fs.readFile(file)).equals(before)).to.be.true
+      expect(JSON.parse((await fs.readFile(file)).toString('utf8'))).to.deep.equal(seeded)
+      if (process.platform !== 'win32') {
+        // The fixture is written 0o600 exactly as saveProfiles does; listing
+        // must neither weaken nor "repair" the stored mode.
+        expect(beforeMode).to.equal(0o600)
+        // eslint-disable-next-line no-bitwise -- isolating the permission bits
+        expect((await fs.stat(file)).mode & 0o777).to.equal(0o600)
+      }
+    })
+
+    it('honors the configFile factory option', async () => {
+      await fs.outputJSON(path.join(tmpDir, '@hesed/plugin-lib', 'custom-auth.json'), {
+        profiles: {default: {apiToken: 'custom-file-token', host: 'https://custom.example.test'}},
+      })
+
+      const {output, result} = await withCapturedStdout(() =>
+        run(createAuthListCommand({configFile: 'custom-auth.json'})),
+      )
+
+      expect((result as {data: unknown}).data).to.deep.equal([
+        {apiToken: '********oken', default: true, host: 'https://custom.example.test', name: 'default'},
+      ])
+      expect(output).to.include('apiToken: ********oken')
+      expect(output).to.not.include('custom-file-token')
+    })
+  })
+
+  describe('auth and pgauth list command entry points', () => {
+    // Both wrappers instantiate the same factory; running the actual exported
+    // classes proves masking covers both commands without changing CLI
+    // registration or the wrappers.
+    const entryPoints: Array<[string, typeof Command]> = [
+      ['auth list', authListCommand],
+      ['pgauth list', pgauthListCommand],
+    ]
+
+    for (const [label, Cls] of entryPoints) {
+      it(`${label} masks credentials identically in text and --json output`, async () => {
+        await fs.outputJSON(configFilePath(), {
+          defaultProfile: 'default',
+          profiles: {
+            default: {apiToken: 'default-abcd1234efgh', host: 'https://api.example.test'},
+            work: {apiKey: 'wk-9988776655', host: 'https://work.example.test'},
+          },
+        })
+
+        const maskedDefault = {
+          apiToken: '********efgh',
+          default: true,
+          host: 'https://api.example.test',
+          name: 'default',
+        }
+        const maskedWork = {
+          apiKey: '********6655',
+          host: 'https://work.example.test',
+          name: 'work',
+        }
+
+        const text = await withCapturedStdout(() => run(Cls))
+        expect(text.output).to.include('apiToken: ********efgh')
+        expect(text.output).to.include('apiKey: ********6655')
+        expect(text.output).to.not.include('default-abcd1234efgh')
+        expect(text.output).to.not.include('wk-9988776655')
+        expect(text.result).to.deep.include({success: true})
+        expect((text.result as {data: unknown}).data).to.deep.equal([maskedDefault, maskedWork])
+
+        const json = await withCapturedStdout(() => run(Cls, ['--json']))
+        const parsed = JSON.parse(json.output) as {data: unknown; success: boolean}
+        expect(parsed.success).to.be.true
+        expect(parsed.data).to.deep.equal([maskedDefault, maskedWork])
+        expect(json.output).to.not.include('default-abcd1234efgh')
+        expect(json.output).to.not.include('wk-9988776655')
+      })
+    }
   })
 
   describe('createAuthAddCommand', () => {
