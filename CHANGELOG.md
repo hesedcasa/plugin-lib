@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/hesedcasa/plugin-lib/compare/v0.13.1...v0.13.2) (2026-11-25)
+
+
+### 🛠️ Fixes
+
+* **auth:** mask credential values in list output ([#119](https://github.com/hesedcasa/plugin-lib/issues/119)) ([4a888eb](https://github.com/hesedcasa/plugin-lib/commit/4a888eb8b2e6834f160eb79f88e6046d32134388))
+
 ## [0.13.1](https://github.com/hesedcasa/plugin-lib/compare/v0.13.0...v0.13.1) (2026-11-18)
 
 
